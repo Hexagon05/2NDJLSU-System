@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Outer Circle -->
+  <circle cx="100" cy="100" r="95" fill="white" stroke="black" stroke-width="3"/>
+  
+  <!-- Text around circle -->
+  <defs>
+    <path id="circlePath" d="M 25,100 A 75,75 0 1,1 175,100" fill="none"/>
+  </defs>
+  <text font-family="Arial, sans-serif" font-size="14" font-weight="bold" letter-spacing="2" fill="black">
+    <textPath href="#circlePath" startOffset="50%" text-anchor="middle">
+      AFPLSC - LOGISTICS SUPPORT GROUP
+    </textPath>
+  </text>
+  
+  <!-- Star (Blue and Green) -->
+  <g transform="translate(100, 80)">
+    <!-- Dark Blue part -->
+    <path d="M 0,-30 L 15,-5 L 45,-5 L 22,15 L 30,45 L 0,25 L -30,45 L -22,15 L -45,-5 L -15,-5 Z" fill="#003399"/>
+    <!-- Light Blue part -->
+    <path d="M 0,-30 L 0,25 L 15,-5 L 45,-5 L 22,15 L 30,45 Z" fill="#0066FF"/>
+    <!-- Green part -->
+    <path d="M 0,10 L 15,20 L 22,15 L 30,45 L 0,25 Z" fill="#00AA00"/>
+  </g>
+  
+  <!-- Sword and Key -->
+  <g transform="translate(85, 85)">
+    <!-- Key -->
+    <circle cx="-15" cy="-10" r="8" fill="none" stroke="#B8860B" stroke-width="2"/>
+    <rect x="-15" y="-2" width="20" height="2" fill="#B8860B"/>
+    <rect x="5" y="-4" width="8" height="8" fill="#B8860B"/>
+    
+    <!-- Sword -->
+    <rect x="0" y="-25" width="3" height="40" fill="#808080"/>
+    <polygon points="1.5,-25 1.5,-28 4.5,-28 4.5,-25" fill="#8B4513"/>
+  </g>
+  
+  <!-- Bottom Gear/Badge -->
+  <g transform="translate(100, 130)">
+    <!-- Orange gear background -->
+    <circle cx="0" cy="0" r="18" fill="#FF9900"/>
+    <!-- Red circle inside -->
+    <circle cx="0" cy="0" r="12" fill="#CC0000"/>
+  </g>
+  
+  <!-- Text at bottom -->
+  <text x="100" y="160" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="black">
+    AFPLSC 2025
+  </text>
+</svg>
