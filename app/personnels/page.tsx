@@ -15,6 +15,7 @@ import {
     updateDoc,
 } from "firebase/firestore";
 import { hashPassword } from "@/lib/password-utils";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
 
 interface Officer {
     id?: string;
@@ -30,6 +31,7 @@ interface Officer {
     currentAddress: string;
     permanentAddress: string;
     username: string;
+    imageUrl?: string;
 }
 
 const EMPTY_FORM: Omit<Officer, "id" | "dateAdded" | "username"> & { password: string; confirmPassword: string } = {
@@ -45,6 +47,7 @@ const EMPTY_FORM: Omit<Officer, "id" | "dateAdded" | "username"> & { password: s
     permanentAddress: "",
     password: "",
     confirmPassword: "",
+    imageUrl: "",
 };
 
 export default function PersonnelsPage() {
@@ -69,6 +72,9 @@ export default function PersonnelsPage() {
     const [cancelConfirmationOpen, setCancelConfirmationOpen] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    const [uploadingImage, setUploadingImage] = useState(false);
+    const [imageFile, setImageFile] = useState<File | null>(null);
+    const [imagePreview, setImagePreview] = useState<string>("");
 
     const today = new Date().toISOString().split("T")[0];
 
@@ -100,6 +106,16 @@ export default function PersonnelsPage() {
     useEffect(() => {
         if (user) fetchOfficers();
     }, [user]);
+
+    // Set image preview when editing personnel with existing image
+    useEffect(() => {
+        if (editModalOpen && selectedPersonnel?.imageUrl) {
+            setImagePreview(selectedPersonnel.imageUrl);
+        } else if (!editModalOpen) {
+            setImagePreview("");
+            setImageFile(null);
+        }
+    }, [editModalOpen, selectedPersonnel?.imageUrl]);
 
     // ── auth guards ─────────────────────────────────────────────────
     if (loading) {
@@ -165,12 +181,54 @@ export default function PersonnelsPage() {
         return `${yearStr}${sequenceStr}`;
     };
 
+    const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            // Validate file type
+            const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+            if (!validTypes.includes(file.type)) {
+                setErrorMsg("Invalid file type. Please upload a valid image (JPEG, PNG, GIF, or WebP).");
+                return;
+            }
+            // Validate file size (max 10MB)
+            const maxSize = 10 * 1024 * 1024;
+            if (file.size > maxSize) {
+                setErrorMsg("File size too large. Maximum size is 10MB.");
+                return;
+            }
+            setImageFile(file);
+            // Create preview
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setImagePreview(reader.result as string);
+            };
+            reader.readAsDataURL(file);
+            setErrorMsg("");
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setSubmitting(true);
         setErrorMsg("");
         
         try {
+            // Upload image if selected
+            let imageUrl = "";
+            if (imageFile) {
+                setUploadingImage(true);
+                try {
+                    const uploadResult = await uploadImageToCloudinary(imageFile, "personnel");
+                    imageUrl = uploadResult.secure_url;
+                } catch (error) {
+                    console.error("Image upload error:", error);
+                    setErrorMsg("Failed to upload image. You can still save without an image.");
+                    // Continue without image
+                } finally {
+                    setUploadingImage(false);
+                }
+            }
+            
             // Validate password
             const passwordValidation = validatePassword(form.password);
             if (!passwordValidation.valid) {
@@ -204,6 +262,7 @@ export default function PersonnelsPage() {
                 role: "officer",
                 isActive: true,
                 createdAt: Timestamp.now(),
+                imageUrl: imageUrl || "",
             });
             
             setSuccessMsg(`Personnel added successfully! Username: ${username}`);
@@ -225,9 +284,10 @@ export default function PersonnelsPage() {
         setErrorMsg("");
         setShowPassword(false);
         setShowConfirmPassword(false);
+        setImageFile(null);
+        setImagePreview("");
     };
 
-    // ── detail view & edit handlers ──────────────────────────────────
     const handleViewDetails = (officer: Officer) => {
         setSelectedPersonnel(officer);
         setOriginalPersonnel(officer);
@@ -241,15 +301,34 @@ export default function PersonnelsPage() {
     const handleConfirmSave = async () => {
         if (!selectedPersonnel || !selectedPersonnel.id) return;
         try {
+            // Upload image if a new image was selected
+            let imageUrl = selectedPersonnel.imageUrl || "";
+            if (imageFile) {
+                setUploadingImage(true);
+                try {
+                    const uploadResult = await uploadImageToCloudinary(imageFile, "personnel");
+                    imageUrl = uploadResult.secure_url;
+                } catch (error) {
+                    console.error("Image upload error:", error);
+                    setErrorMsg("Failed to upload image. Saving other changes...");
+                } finally {
+                    setUploadingImage(false);
+                }
+            }
+
             const { id, dateAdded, ...dataToUpdate } = selectedPersonnel;
-            await updateDoc(doc(db, "personnelAccount", selectedPersonnel.id), dataToUpdate);
-            setOriginalPersonnel(selectedPersonnel);
+            await updateDoc(doc(db, "personnelAccount", selectedPersonnel.id), {
+                ...dataToUpdate,
+                imageUrl,
+            });
+            setOriginalPersonnel({ ...selectedPersonnel, imageUrl });
             setSuccessMsg("Personnel updated successfully!");
             setTimeout(() => setSuccessMsg(""), 3500);
             await fetchOfficers();
             setConfirmationOpen(false);
             setEditModalOpen(false);
             setDetailsModalOpen(true);
+            setImageFile(null);
         } catch (error) {
             console.error("Error saving personnel details:", error);
             setErrorMsg("Failed to save personnel. Please try again.");
@@ -679,6 +758,64 @@ export default function PersonnelsPage() {
                                 </div>
                             )}
 
+                            {/* Profile Image Upload - TOP */}
+                            <div className="flex flex-col items-center border border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-green-50/30 rounded-2xl p-6">
+                                <label className="block text-sm font-bold text-slate-700 mb-3 uppercase tracking-wide">
+                                    Profile Image
+                                </label>
+                                {/* Image Preview */}
+                                <div className="mb-4">
+                                    {imagePreview ? (
+                                        <div className="relative w-40 h-40 rounded-2xl border-4 border-emerald-300 overflow-hidden shadow-lg">
+                                            <img
+                                                src={imagePreview}
+                                                alt="Preview"
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setImageFile(null);
+                                                    setImagePreview("");
+                                                }}
+                                                className="absolute top-2 right-2 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1.5 transition-colors shadow-lg"
+                                            >
+                                                <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>close</span>
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="w-40 h-40 rounded-2xl border-4 border-dashed border-emerald-300 bg-white flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-emerald-400" style={{ fontSize: "4rem" }}>person</span>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Upload Button */}
+                                <input
+                                    type="file"
+                                    id="personnel-image"
+                                    accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                                    onChange={handleImageChange}
+                                    className="hidden"
+                                />
+                                <label
+                                    htmlFor="personnel-image"
+                                    className="inline-flex items-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-6 py-3 text-sm font-bold text-white hover:from-emerald-600 hover:to-green-700 transition-all shadow-lg shadow-emerald-500/30"
+                                >
+                                    <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>upload</span>
+                                    Choose Profile Image
+                                </label>
+                                <p className="text-xs text-slate-500 mt-3 text-center">
+                                    Supported: JPEG, PNG, GIF, WebP • Max size: 10MB
+                                </p>
+                                {uploadingImage && (
+                                    <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1 font-semibold">
+                                        <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>progress_activity</span>
+                                        Uploading image...
+                                    </p>
+                                )}
+                            </div>
+
                             {/* Username & Password */}
                             <div className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-5">
                                 <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
@@ -982,6 +1119,18 @@ export default function PersonnelsPage() {
                             </button>
                         </div>
                         <div className="p-6 max-h-[70vh] overflow-y-auto">
+                            {/* Profile Image Section */}
+                            {selectedPersonnel.imageUrl && (
+                                <div className="flex justify-center mb-6">
+                                    <div className="relative w-48 h-48 rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
+                                        <img
+                                            src={selectedPersonnel.imageUrl}
+                                            alt={`${selectedPersonnel.firstName} ${selectedPersonnel.lastName}`}
+                                            className="w-full h-full object-cover"
+                                        />
+                                    </div>
+                                </div>
+                            )}
                             <div className="grid grid-cols-2 gap-6">
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">First Name</label>
@@ -1071,6 +1220,67 @@ export default function PersonnelsPage() {
                             </button>
                         </div>
                         <form onSubmit={(e) => { e.preventDefault(); handleSaveChanges(); }} className="p-6 space-y-4">
+                            {/* Profile Image Upload Section */}
+                            <div className="flex flex-col items-center border border-blue-200 bg-gradient-to-br from-blue-50/50 to-sky-50/30 rounded-2xl p-6 mb-4">
+                                <label className="block text-sm font-bold text-slate-700 mb-3 uppercase tracking-wide">
+                                    Profile Image
+                                </label>
+                                {/* Image Preview */}
+                                <div className="mb-4">
+                                    {imagePreview ? (
+                                        <div className="relative w-40 h-40 rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
+                                            <img
+                                                src={imagePreview}
+                                                alt="Preview"
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setImageFile(null);
+                                                    setImagePreview("");
+                                                    if (selectedPersonnel) {
+                                                        handleEditChange("imageUrl", "");
+                                                    }
+                                                }}
+                                                className="absolute top-2 right-2 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1.5 transition-colors shadow-lg"
+                                            >
+                                                <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>close</span>
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="w-40 h-40 rounded-2xl border-4 border-dashed border-blue-300 bg-white flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "4rem" }}>person</span>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Upload Button */}
+                                <input
+                                    type="file"
+                                    id="edit-personnel-image"
+                                    accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                                    onChange={handleImageChange}
+                                    className="hidden"
+                                />
+                                <label
+                                    htmlFor="edit-personnel-image"
+                                    className="inline-flex items-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-3 text-sm font-bold text-white hover:from-blue-600 hover:to-blue-700 transition-all shadow-lg shadow-blue-500/30"
+                                >
+                                    <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>upload</span>
+                                    Change Profile Image
+                                </label>
+                                <p className="text-xs text-slate-500 mt-3 text-center">
+                                    JPEG, PNG, GIF, WebP • Max: 10MB
+                                </p>
+                                {uploadingImage && (
+                                    <p className="text-xs text-blue-600 mt-2 flex items-center gap-1 font-semibold">
+                                        <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>progress_activity</span>
+                                        Uploading...
+                                    </p>
+                                )}
+                            </div>
+
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                 <div className="sm:col-span-1">
                                     <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Last Name</label>

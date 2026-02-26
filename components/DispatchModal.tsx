@@ -98,7 +98,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                 if (vData.length > 0) setTruck(vData[0].codename);
 
                 // 3. Fetch Officers
-                const oSnap = await getDocs(query(collection(db, "officers"), orderBy("lastName", "asc")));
+                const oSnap = await getDocs(query(collection(db, "personnelAccount"), orderBy("lastName", "asc")));
                 setDbPersonnels(oSnap.docs.map(d => {
                     const data = d.data();
                     return {

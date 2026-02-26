@@ -15,6 +15,7 @@ import {
   updateDoc,
   deleteDoc,
 } from "firebase/firestore";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
 
 interface Vehicle {
   id?: string;
@@ -33,6 +34,7 @@ interface Vehicle {
   vehicleType?: string;
   vehicleCondition: string;
   odometer: number;
+  imageUrl?: string;
 }
 
 interface Officer {
@@ -67,6 +69,7 @@ export default function VehiclePage() {
     vehicleType: "",
     vehicleCondition: "New",
     odometer: 0,
+    imageUrl: "",
   });
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [originalVehicle, setOriginalVehicle] = useState<Vehicle | null>(null);
@@ -75,6 +78,9 @@ export default function VehiclePage() {
   const [cancelConfirmationOpen, setCancelConfirmationOpen] = useState(false);
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string>("");
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -117,6 +123,16 @@ export default function VehiclePage() {
       fetchVehicles();
     }
   }, [user]);
+
+  // Set image preview when editing vehicle with existing image
+  useEffect(() => {
+    if (editModalOpen && selectedVehicle?.imageUrl) {
+      setImagePreview(selectedVehicle.imageUrl);
+    } else if (!editModalOpen) {
+      setImagePreview("");
+      setImageFile(null);
+    }
+  }, [editModalOpen, selectedVehicle?.imageUrl]);
 
   // Proactive Migration: Update existing vehicles that have old types
   useEffect(() => {
@@ -164,10 +180,52 @@ export default function VehiclePage() {
     router.push("/login");
   };
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file type
+      const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+      if (!validTypes.includes(file.type)) {
+        setErrorMsg("Invalid file type. Please upload a valid image (JPEG, PNG, GIF, or WebP).");
+        return;
+      }
+      // Validate file size (max 10MB)
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        setErrorMsg("File size too large. Maximum size is 10MB.");
+        return;
+      }
+      setImageFile(file);
+      // Create preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+      setErrorMsg("");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setErrorMsg("");
+
+    // Upload image if selected
+    let imageUrl = "";
+    if (imageFile) {
+      setUploadingImage(true);
+      try {
+        const uploadResult = await uploadImageToCloudinary(imageFile, "vehicles");
+        imageUrl = uploadResult.secure_url;
+      } catch (error) {
+        console.error("Image upload error:", error);
+        setErrorMsg("Failed to upload image. You can still save without an image.");
+        // Continue without image
+      } finally {
+        setUploadingImage(false);
+      }
+    }
 
     const assignedOfficer = personnels.find(o => o.id === form.personnelId);
     const personnelName = assignedOfficer ? `${assignedOfficer.rank} ${assignedOfficer.lastName}, ${assignedOfficer.firstName}` : "Unassigned";
@@ -179,6 +237,7 @@ export default function VehiclePage() {
         dateAdded: today,
         status: "Active",
         createdAt: Timestamp.now(),
+        imageUrl: imageUrl || "",
       });
       setSuccessMsg("Vehicle added successfully!");
       setModalOpen(false);
@@ -195,7 +254,10 @@ export default function VehiclePage() {
         vehicleType: "",
         vehicleCondition: "New",
         odometer: 0,
+        imageUrl: "",
       });
+      setImageFile(null);
+      setImagePreview("");
       await fetchVehicles();
       setTimeout(() => setSuccessMsg(""), 3500);
     } catch (err) {
@@ -218,7 +280,26 @@ export default function VehiclePage() {
 
   const handleConfirmSave = async () => {
     if (!selectedVehicle || !selectedVehicle.id) return;
+    
+    setConfirmationOpen(false); // Close confirmation modal immediately
+    setErrorMsg(""); // Clear any previous errors
+    
     try {
+      // Upload image if a new image was selected
+      let imageUrl = selectedVehicle.imageUrl || "";
+      if (imageFile) {
+        setUploadingImage(true);
+        try {
+          const uploadResult = await uploadImageToCloudinary(imageFile, "vehicle");
+          imageUrl = uploadResult.secure_url;
+        } catch (error) {
+          console.error("Image upload error:", error);
+          setErrorMsg("Failed to upload image. Saving other changes...");
+        } finally {
+          setUploadingImage(false);
+        }
+      }
+
       const vehicleData = {
         codename: selectedVehicle.codename,
         personnelId: selectedVehicle.personnelId,
@@ -235,18 +316,34 @@ export default function VehiclePage() {
         vehicleType: selectedVehicle.vehicleType,
         vehicleCondition: selectedVehicle.vehicleCondition,
         odometer: selectedVehicle.odometer,
+        imageUrl,
       };
+      
       await updateDoc(doc(db, "vehicles", selectedVehicle.id), vehicleData);
-      setOriginalVehicle(selectedVehicle);
+      
+      // Update the selected vehicle with the new image URL
+      const updatedVehicle = { ...selectedVehicle, imageUrl };
+      setSelectedVehicle(updatedVehicle);
+      setOriginalVehicle(updatedVehicle);
+      
       setSuccessMsg("Vehicle saved successfully!");
       setTimeout(() => setSuccessMsg(""), 3500);
+      
       await fetchVehicles();
-      setConfirmationOpen(false);
+      
       setEditModalOpen(false);
-      setDetailsModalOpen(true);
+      setImageFile(null);
+      setImagePreview("");
+      
+      // Reopen details modal to show updated vehicle
+      setTimeout(() => {
+        setDetailsModalOpen(true);
+      }, 100);
+      
     } catch (error) {
       console.error("Error saving vehicle details:", error);
       setErrorMsg("Failed to save vehicle. Please try again.");
+      setTimeout(() => setErrorMsg(""), 5000);
     }
   };
 
@@ -269,7 +366,16 @@ export default function VehiclePage() {
 
   const handleEditChange = (field: keyof Vehicle, value: any) => {
     if (selectedVehicle) {
-      setSelectedVehicle({ ...selectedVehicle, [field]: value });
+      // If changing personnelId, also update personnelName
+      if (field === "personnelId") {
+        const selectedPersonnel = personnels.find(p => p.id === value);
+        const personnelName = selectedPersonnel 
+          ? `${selectedPersonnel.rank} ${selectedPersonnel.lastName}, ${selectedPersonnel.firstName}` 
+          : "Unassigned";
+        setSelectedVehicle({ ...selectedVehicle, personnelId: value, personnelName });
+      } else {
+        setSelectedVehicle({ ...selectedVehicle, [field]: value });
+      }
     }
   };
 
@@ -414,6 +520,16 @@ export default function VehiclePage() {
               </div>
             )}
 
+            {/* Error Banner */}
+            {errorMsg && (
+              <div className="flex items-center gap-3 rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-rose-800 animate-fade-in">
+                <span className="material-symbols-outlined text-rose-500" style={{ fontSize: "1.25rem" }}>
+                  error
+                </span>
+                <span className="text-sm font-medium">{errorMsg}</span>
+              </div>
+            )}
+
             {/* Search and Add */}
             <div className="flex gap-3 flex-wrap items-center">
               <div className="flex-1 min-w-64 relative">
@@ -508,21 +624,86 @@ export default function VehiclePage() {
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setModalOpen(false)}
           />
-          <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between">
+          <div className="relative w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl animate-fade-in">
+            <div className="sticky top-0 z-10 bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between rounded-t-2xl">
               <h2 className="text-lg font-bold text-white">Add New Vehicle</h2>
               <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-white">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-6">
               {errorMsg && (
-                <div className="p-3 bg-rose-50 text-rose-700 text-sm rounded-xl border border-rose-200 flex items-center gap-2">
+                <div className="p-3 bg-rose-50 text-rose-700 text-sm rounded-xl border border-rose-200 flex items-center gap-2 mb-6">
                   <span className="material-symbols-outlined text-rose-500">error</span>
                   {errorMsg}
                 </div>
               )}
+
+              {/* Two-Column Layout: Image Left, Form Right */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                {/* LEFT SIDE - Vehicle Image */}
+                <div className="lg:col-span-1">
+                  <div className="sticky top-6 flex flex-col items-center border-2 border-blue-200 bg-gradient-to-br from-blue-50/50 to-sky-50/30 rounded-2xl p-6">
+                    <label className="block text-sm font-bold text-slate-700 mb-4 uppercase tracking-wide">
+                      Vehicle Image
+                    </label>
+                    {/* Image Preview */}
+                    <div className="mb-4 w-full">
+                      {imagePreview ? (
+                        <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
+                          <img
+                            src={imagePreview}
+                            alt="Preview"
+                            className="w-full h-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setImageFile(null);
+                              setImagePreview("");
+                            }}
+                            className="absolute top-2 right-2 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-2 transition-colors shadow-lg"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>close</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="w-full aspect-square rounded-2xl border-4 border-dashed border-blue-300 bg-white flex items-center justify-center">
+                          <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "5rem" }}>local_shipping</span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Upload Button */}
+                    <input
+                      type="file"
+                      id="vehicle-image"
+                      accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                      onChange={handleImageChange}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="vehicle-image"
+                      className="w-full inline-flex items-center justify-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-3 text-sm font-bold text-white hover:from-blue-600 hover:to-blue-700 transition-all shadow-lg shadow-blue-500/30"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>upload</span>
+                      Choose Image
+                    </label>
+                    <p className="text-xs text-slate-500 mt-3 text-center">
+                      JPEG, PNG, GIF, WebP<br />Max: 10MB
+                    </p>
+                    {uploadingImage && (
+                      <p className="text-xs text-blue-600 mt-3 flex items-center gap-1 font-semibold">
+                        <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>progress_activity</span>
+                        Uploading...
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* RIGHT SIDE - Form Fields */}
+                <div className="lg:col-span-2 space-y-4">
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Codename</label>
@@ -683,6 +864,8 @@ export default function VehiclePage() {
                   </div>
                 </div>
               </div>
+                </div>
+              </div>
 
               <div className="flex gap-3 pt-4 border-t border-slate-100">
                 <button
@@ -712,7 +895,7 @@ export default function VehiclePage() {
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
             onClick={() => setDetailsModalOpen(false)}
           />
-          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
+          <div className="relative w-full max-w-6xl rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
             <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/20 border border-blue-500/30">
@@ -727,8 +910,33 @@ export default function VehiclePage() {
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
-            <div className="p-6 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-6">
+            <div className="p-6 max-h-[75vh] overflow-y-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* LEFT SIDE - Vehicle Image */}
+                <div className="lg:col-span-1">
+                  <div className="sticky top-0">
+                    {selectedVehicle.imageUrl ? (
+                      <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg bg-slate-50">
+                        <img
+                          src={selectedVehicle.imageUrl}
+                          alt={`${selectedVehicle.codename}`}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="relative w-full aspect-square rounded-2xl border-4 border-dashed border-slate-300 overflow-hidden shadow-lg bg-slate-50 flex items-center justify-center">
+                        <div className="text-center">
+                          <span className="material-symbols-outlined text-slate-300" style={{ fontSize: "5rem" }}>local_shipping</span>
+                          <p className="text-sm text-slate-400 mt-2 font-medium">No Image</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* RIGHT SIDE - Vehicle Details */}
+                <div className="lg:col-span-2">
+                  <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Codename</label>
                   <p className="text-base text-slate-900 font-bold bg-slate-50 rounded-lg p-3">{selectedVehicle.codename}</p>
@@ -783,6 +991,8 @@ export default function VehiclePage() {
                   <p className="text-base text-slate-900 font-bold bg-slate-50 rounded-lg p-3">{selectedVehicle.odometer || 0} <span className="text-xs text-slate-500 font-normal">Km</span></p>
                 </div>
               </div>
+                </div>
+              </div>
             </div>
             <div className="flex justify-end gap-3 p-6 border-t border-slate-100 bg-slate-50">
               <button
@@ -812,160 +1022,249 @@ export default function VehiclePage() {
           <div
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
           />
-          <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
+          <div className="relative w-full max-w-6xl rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden max-h-[90vh] flex flex-col">
             <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between">
               <h2 className="text-lg font-bold text-white">Edit Vehicle Details</h2>
+              <button
+                onClick={() => setCancelConfirmationOpen(true)}
+                className="text-slate-400 hover:text-white transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); handleSaveChanges(); }} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Codename</label>
-                <input
-                  required
-                  type="text"
-                  value={selectedVehicle.codename || ""}
-                  onChange={(e) => handleEditChange("codename", e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Personnel Assigned</label>
-                <select
-                  value={selectedVehicle.personnelId || ""}
-                  onChange={(e) => handleEditChange("personnelId", e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
-                >
-                  <option value="">Select Personnel</option>
-                  {personnels.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      [{o.rank}] {o.lastName}, {o.firstName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Truck Type</label>
-                <select
-                  value={selectedVehicle.truckType || ""}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    let payloadCapacity = 5;
-                    if (val === "M923") payloadCapacity = 5;
-                    else if (val === "KM450") payloadCapacity = 1.25;
-                    else if (val === "KM250") payloadCapacity = 2.5;
-                    handleEditChange("truckType", val);
-                    handleEditChange("payloadCapacity", payloadCapacity);
-                  }}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
-                >
-                  <option value="M923">M923</option>
-                  <option value="KM450">KM450</option>
-                  <option value="KM250">KM250</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Body Number</label>
-                <input
-                  required
-                  type="text"
-                  value={selectedVehicle.bodyNumber || ""}
-                  onChange={(e) => handleEditChange("bodyNumber", e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Chassis Number</label>
-                <input
-                  required
-                  type="text"
-                  value={selectedVehicle.chassisNumber || ""}
-                  onChange={(e) => handleEditChange("chassisNumber", e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Engine Number</label>
-                <input
-                  required
-                  type="text"
-                  value={selectedVehicle.engineNumber || ""}
-                  onChange={(e) => handleEditChange("engineNumber", e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Gas Tank Capacity</label>
-                <input
-                  required
-                  type="number"
-                  value={selectedVehicle.gasTankCapacity || ""}
-                  onChange={(e) => handleEditChange("gasTankCapacity", parseInt(e.target.value))}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Payload Capacity</label>
-                <input
-                  required
-                  type="number"
-                  value={selectedVehicle.payloadCapacity || ""}
-                  onChange={(e) => handleEditChange("payloadCapacity", parseInt(e.target.value))}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Condition</label>
-                  <select
-                    value={selectedVehicle.vehicleCondition || "New"}
-                    onChange={(e) => {
-                      const cond = e.target.value;
-                      setSelectedVehicle({
-                        ...selectedVehicle,
-                        vehicleCondition: cond,
-                        odometer: cond === "New" ? 0 : selectedVehicle.odometer
-                      });
-                    }}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
-                  >
-                    <option value="New">New</option>
-                    <option value="2nd hand">2nd hand</option>
-                  </select>
+            <form onSubmit={(e) => { e.preventDefault(); handleSaveChanges(); }} className="overflow-y-auto flex-1">
+              <div className="p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                  {/* LEFT SIDE - Vehicle Image */}
+                  <div className="lg:col-span-1">
+                    <div className="sticky top-0 flex flex-col items-center border-2 border-blue-200 bg-gradient-to-br from-blue-50/50 to-sky-50/30 rounded-2xl p-6">
+                      <label className="block text-sm font-bold text-slate-700 mb-4 uppercase tracking-wide">
+                        Vehicle Image
+                      </label>
+                      {/* Image Preview */}
+                      <div className="mb-4 w-full">
+                        {imagePreview ? (
+                          <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
+                            <img
+                              src={imagePreview}
+                              alt="Preview"
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setImageFile(null);
+                                setImagePreview("");
+                                if (selectedVehicle) {
+                                  handleEditChange("imageUrl", "");
+                                }
+                              }}
+                              className="absolute top-2 right-2 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-2 transition-colors shadow-lg"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>close</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="w-full aspect-square rounded-2xl border-4 border-dashed border-blue-300 bg-white flex items-center justify-center">
+                            <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "5rem" }}>local_shipping</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Upload Button */}
+                      <input
+                        type="file"
+                        id="edit-vehicle-image"
+                        accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                        onChange={handleImageChange}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="edit-vehicle-image"
+                        className="w-full inline-flex items-center justify-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-3 text-sm font-bold text-white hover:from-blue-600 hover:to-blue-700 transition-all shadow-lg shadow-blue-500/30"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>upload</span>
+                        Change Image
+                      </label>
+                      <p className="text-xs text-slate-500 mt-3 text-center">
+                        JPEG, PNG, GIF, WebP<br />Max: 10MB
+                      </p>
+                      {uploadingImage && (
+                        <p className="text-xs text-blue-600 mt-3 flex items-center gap-1 font-semibold">
+                          <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>progress_activity</span>
+                          Uploading...
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* RIGHT SIDE - Form Fields */}
+                  <div className="lg:col-span-2 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Codename</label>
+                        <input
+                          required
+                          type="text"
+                          value={selectedVehicle.codename || ""}
+                          onChange={(e) => handleEditChange("codename", e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Truck Type</label>
+                        <select
+                          value={selectedVehicle.truckType || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            let payloadCapacity = 5;
+                            if (val === "M923") payloadCapacity = 5;
+                            else if (val === "KM450") payloadCapacity = 1.25;
+                            else if (val === "KM250") payloadCapacity = 2.5;
+                            handleEditChange("truckType", val);
+                            handleEditChange("payloadCapacity", payloadCapacity);
+                          }}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                        >
+                          <option value="M923">M923</option>
+                          <option value="KM450">KM450</option>
+                          <option value="KM250">KM250</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Personnel Assigned</label>
+                      <select
+                        value={selectedVehicle.personnelId || ""}
+                        onChange={(e) => handleEditChange("personnelId", e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                      >
+                        <option value="">Select Personnel</option>
+                        {personnels.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            [{o.rank}] {o.lastName}, {o.firstName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Body Number</label>
+                        <input
+                          required
+                          type="text"
+                          value={selectedVehicle.bodyNumber || ""}
+                          onChange={(e) => handleEditChange("bodyNumber", e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Chassis Number</label>
+                        <input
+                          required
+                          type="text"
+                          value={selectedVehicle.chassisNumber || ""}
+                          onChange={(e) => handleEditChange("chassisNumber", e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Engine Number</label>
+                      <input
+                        required
+                        type="text"
+                        value={selectedVehicle.engineNumber || ""}
+                        onChange={(e) => handleEditChange("engineNumber", e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Gas Tank Capacity (L)</label>
+                        <input
+                          required
+                          type="number"
+                          value={selectedVehicle.gasTankCapacity || ""}
+                          onChange={(e) => handleEditChange("gasTankCapacity", parseInt(e.target.value))}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Payload Capacity (T)</label>
+                        <input
+                          required
+                          type="number"
+                          step="0.01"
+                          value={selectedVehicle.payloadCapacity || ""}
+                          onChange={(e) => handleEditChange("payloadCapacity", parseFloat(e.target.value))}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Condition</label>
+                        <select
+                          value={selectedVehicle.vehicleCondition || "New"}
+                          onChange={(e) => {
+                            const cond = e.target.value;
+                            setSelectedVehicle({
+                              ...selectedVehicle,
+                              vehicleCondition: cond,
+                              odometer: cond === "New" ? 0 : selectedVehicle.odometer
+                            });
+                          }}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                        >
+                          <option value="New">New</option>
+                          <option value="2nd hand">2nd hand</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Odometer (Km)</label>
+                        <input
+                          disabled={selectedVehicle.vehicleCondition === "New"}
+                          type="number"
+                          value={selectedVehicle.odometer || 0}
+                          onChange={(e) => handleEditChange("odometer", parseInt(e.target.value) || 0)}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:bg-slate-50 disabled:text-slate-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Odometer (Km)</label>
-                  <input
-                    disabled={selectedVehicle.vehicleCondition === "New"}
-                    type="number"
-                    value={selectedVehicle.odometer || 0}
-                    onChange={(e) => handleEditChange("odometer", parseInt(e.target.value) || 0)}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:bg-slate-50 disabled:text-slate-400"
-                  />
-                </div>
               </div>
-              <div className="flex gap-3 pt-4 border-t border-slate-100">
+              
+              {/* Footer Actions */}
+              <div className="flex gap-3 px-6 py-4 border-t border-slate-100 bg-slate-50 sticky bottom-0">
                 <button
                   type="button"
                   onClick={() => setDeleteConfirmationOpen(true)}
-                  className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-600 hover:bg-rose-100 transition-all flex items-center gap-2"
+                  className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-bold text-rose-600 hover:bg-rose-100 transition-all flex items-center gap-2"
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>delete</span>
-                  Delete
+                  Delete Vehicle
                 </button>
-                <div className="flex-1 flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setCancelConfirmationOpen(true)}
-                    className="flex-1 rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 rounded-xl bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/30 hover:shadow-xl active:scale-95 transition-all"
-                  >
-                    Save Changes
-                  </button>
-                </div>
+                <div className="flex-1"></div>
+                <button
+                  type="button"
+                  onClick={() => setCancelConfirmationOpen(true)}
+                  className="rounded-xl border-2 border-slate-200 px-6 py-3 text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-emerald-500 px-8 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:bg-emerald-600 active:scale-95 transition-all"
+                >
+                  Save Changes
+                </button>
               </div>
             </form>
           </div>
