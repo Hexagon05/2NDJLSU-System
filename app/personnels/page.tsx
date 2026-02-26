@@ -14,6 +14,7 @@ import {
     doc,
     updateDoc,
 } from "firebase/firestore";
+import { hashPassword } from "@/lib/password-utils";
 
 interface Officer {
     id?: string;
@@ -28,9 +29,10 @@ interface Officer {
     dateAdded: string;
     currentAddress: string;
     permanentAddress: string;
+    username: string;
 }
 
-const EMPTY_FORM: Omit<Officer, "id" | "dateAdded"> = {
+const EMPTY_FORM: Omit<Officer, "id" | "dateAdded" | "username"> & { password: string; confirmPassword: string } = {
     lastName: "",
     firstName: "",
     middleInitial: "",
@@ -41,6 +43,8 @@ const EMPTY_FORM: Omit<Officer, "id" | "dateAdded"> = {
     dateOfBirth: "",
     currentAddress: "",
     permanentAddress: "",
+    password: "",
+    confirmPassword: "",
 };
 
 export default function PersonnelsPage() {
@@ -63,6 +67,8 @@ export default function PersonnelsPage() {
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [confirmationOpen, setConfirmationOpen] = useState(false);
     const [cancelConfirmationOpen, setCancelConfirmationOpen] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const today = new Date().toISOString().split("T")[0];
 
@@ -77,7 +83,7 @@ export default function PersonnelsPage() {
     const fetchOfficers = async () => {
         setFetchLoading(true);
         try {
-            const q = query(collection(db, "officers"), orderBy("dateAdded", "desc"));
+            const q = query(collection(db, "personnelAccount"), orderBy("dateAdded", "desc"));
             const snap = await getDocs(q);
             const data: Officer[] = snap.docs.map((doc) => ({
                 id: doc.id,
@@ -127,21 +133,84 @@ export default function PersonnelsPage() {
         setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
     };
 
+    // ── password validation ─────────────────────────────────────────
+    const validatePassword = (password: string): { valid: boolean; error?: string } => {
+        if (password.length < 8) {
+            return { valid: false, error: "Password must be at least 8 characters" };
+        }
+        if (!/\d/.test(password)) {
+            return { valid: false, error: "Password must contain at least one number" };
+        }
+        if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+            return { valid: false, error: "Password must contain at least one symbol" };
+        }
+        return { valid: true };
+    };
+
+    // ── generate personnel ID ───────────────────────────────────────
+    const generatePersonnelId = (): string => {
+        const currentYear = new Date().getFullYear();
+        const yearStr = String(currentYear);
+        
+        // Filter for IDs created this year
+        const thisYearPersonnels = personnels.filter(p => {
+            if (!p.username) return false;
+            const idYear = p.username.substring(0, 4);
+            return idYear === yearStr;
+        });
+        
+        const nextSequence = thisYearPersonnels.length + 1;
+        const sequenceStr = String(nextSequence).padStart(5, '0');
+        
+        return `${yearStr}${sequenceStr}`;
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setSubmitting(true);
         setErrorMsg("");
+        
         try {
-            await addDoc(collection(db, "officers"), {
-                ...form,
+            // Validate password
+            const passwordValidation = validatePassword(form.password);
+            if (!passwordValidation.valid) {
+                setErrorMsg(passwordValidation.error || "Invalid password");
+                setSubmitting(false);
+                return;
+            }
+            
+            // Check if passwords match
+            if (form.password !== form.confirmPassword) {
+                setErrorMsg("Passwords do not match");
+                setSubmitting(false);
+                return;
+            }
+            
+            // Generate personnel ID as username
+            const username = generatePersonnelId();
+            
+            // Hash password for storage
+            const hashedPassword = await hashPassword(form.password);
+            
+            // Remove plain password and confirmPassword from form data
+            const { password, confirmPassword, ...formDataWithoutPassword } = form;
+            
+            // Add personnel account with all information
+            await addDoc(collection(db, "personnelAccount"), {
+                ...formDataWithoutPassword,
+                username,
+                password: hashedPassword,
                 dateAdded: today,
+                role: "officer",
+                isActive: true,
                 createdAt: Timestamp.now(),
             });
-            setSuccessMsg("Personnel added successfully!");
+            
+            setSuccessMsg(`Personnel added successfully! Username: ${username}`);
             setForm({ ...EMPTY_FORM });
             setModalOpen(false);
-            await fetchPersonnels();
-            setTimeout(() => setSuccessMsg(""), 3500);
+            await fetchOfficers();
+            setTimeout(() => setSuccessMsg(""), 5000);
         } catch (err) {
             console.error("Error adding personnel:", err);
             setErrorMsg("Failed to add personnel. Please try again.");
@@ -154,6 +223,8 @@ export default function PersonnelsPage() {
         setModalOpen(false);
         setForm({ ...EMPTY_FORM });
         setErrorMsg("");
+        setShowPassword(false);
+        setShowConfirmPassword(false);
     };
 
     // ── detail view & edit handlers ──────────────────────────────────
@@ -171,7 +242,7 @@ export default function PersonnelsPage() {
         if (!selectedPersonnel || !selectedPersonnel.id) return;
         try {
             const { id, dateAdded, ...dataToUpdate } = selectedPersonnel;
-            await updateDoc(doc(db, "officers", selectedPersonnel.id), dataToUpdate);
+            await updateDoc(doc(db, "personnelAccount", selectedPersonnel.id), dataToUpdate);
             setOriginalPersonnel(selectedPersonnel);
             setSuccessMsg("Personnel updated successfully!");
             setTimeout(() => setSuccessMsg(""), 3500);
@@ -316,7 +387,7 @@ export default function PersonnelsPage() {
                                 groups
                             </span>
                             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-                                Officers Management
+                                Personnel Management
                             </h1>
                         </div>
                         <div className="flex items-center gap-4">
@@ -439,7 +510,7 @@ export default function PersonnelsPage() {
                                         <span className="material-symbols-outlined" style={{ fontSize: "4rem" }}>
                                             group_off
                                         </span>
-                                        <p className="mt-3 text-base font-medium">No officers found</p>
+                                        <p className="mt-3 text-base font-medium">No personnel found</p>
                                         <p className="text-sm">Add one using the button above.</p>
                                     </div>
                                 ) : (
@@ -516,7 +587,7 @@ export default function PersonnelsPage() {
                                         <span className="material-symbols-outlined" style={{ fontSize: "4rem" }}>
                                             group_off
                                         </span>
-                                        <p className="mt-3 text-base font-medium">No officers found</p>
+                                        <p className="mt-3 text-base font-medium">No personnel found</p>
                                     </div>
                                 ) : (
                                     <table className="w-full">
@@ -607,6 +678,85 @@ export default function PersonnelsPage() {
                                     {errorMsg}
                                 </div>
                             )}
+
+                            {/* Username & Password */}
+                            <div className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-5">
+                                <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                                    <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: "1.1rem" }}>lock</span>
+                                    Login Credentials
+                                </h3>
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                                        Username (Auto-generated)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={generatePersonnelId()}
+                                        readOnly
+                                        className="w-full rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-600 font-mono cursor-not-allowed"
+                                        placeholder="Auto-generated on submit"
+                                    />
+                                    <p className="text-xs text-slate-500 mt-1">Format: YEAR + 5-digit sequence</p>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                                            Password <span className="text-rose-500">*</span>
+                                        </label>
+                                        <div className="relative">
+                                            <input
+                                                required
+                                                type={showPassword ? "text" : "password"}
+                                                name="password"
+                                                value={form.password}
+                                                onChange={handleChange}
+                                                placeholder="Enter password"
+                                                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-11 text-sm text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowPassword(!showPassword)}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                                            >
+                                                <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>
+                                                    {showPassword ? "visibility_off" : "visibility"}
+                                                </span>
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-slate-500 mt-1">
+                                            Min 8 chars • 1 number • 1 symbol
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
+                                            Confirm Password <span className="text-rose-500">*</span>
+                                        </label>
+                                        <div className="relative">
+                                            <input
+                                                required
+                                                type={showConfirmPassword ? "text" : "password"}
+                                                name="confirmPassword"
+                                                value={form.confirmPassword}
+                                                onChange={handleChange}
+                                                placeholder="Re-enter password"
+                                                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-11 text-sm text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                                            >
+                                                <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>
+                                                    {showConfirmPassword ? "visibility_off" : "visibility"}
+                                                </span>
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-slate-500 mt-1">
+                                            Must match password above
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
 
                             {/* Name Row */}
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

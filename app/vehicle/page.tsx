@@ -13,6 +13,7 @@ import {
   query,
   doc,
   updateDoc,
+  deleteDoc,
 } from "firebase/firestore";
 
 interface Vehicle {
@@ -27,8 +28,8 @@ interface Vehicle {
   dateAdded: string;
   status: string;
   bodyNumber?: string;
-  chassisNumber?: number;
-  engineNumber?: number;
+  chassisNumber?: string;
+  engineNumber?: string;
   vehicleType?: string;
   vehicleCondition: string;
   odometer: number;
@@ -72,13 +73,14 @@ export default function VehiclePage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [cancelConfirmationOpen, setCancelConfirmationOpen] = useState(false);
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
 
   const fetchPersonnels = async () => {
     try {
-      const q = query(collection(db, "officers"), orderBy("lastName", "asc"));
+      const q = query(collection(db, "personnelAccount"), orderBy("lastName", "asc"));
       const snap = await getDocs(q);
       const data = snap.docs.map(doc => ({
         id: doc.id,
@@ -88,7 +90,7 @@ export default function VehiclePage() {
       })) as Officer[];
       setPersonnels(data);
     } catch (e) {
-      console.error("Error fetching officers:", e);
+      console.error("Error fetching personnel:", e);
     }
   };
 
@@ -120,7 +122,7 @@ export default function VehiclePage() {
   useEffect(() => {
     if (vehicles.length > 0) {
       const migrateVehicles = async () => {
-        const needsMigration = vehicles.filter(v => v.truckType === "Truck 1" || v.truckType === "Truck 2" || !["M923", "KM450"].includes(v.truckType));
+        const needsMigration = vehicles.filter(v => v.truckType === "Truck 1" || v.truckType === "Truck 2" || !["M923", "KM450", "KM250"].includes(v.truckType));
         if (needsMigration.length > 0) {
           console.log(`Migrating ${needsMigration.length} vehicles...`);
           for (let i = 0; i < needsMigration.length; i++) {
@@ -239,9 +241,29 @@ export default function VehiclePage() {
       setSuccessMsg("Vehicle saved successfully!");
       setTimeout(() => setSuccessMsg(""), 3500);
       await fetchVehicles();
+      setConfirmationOpen(false);
+      setEditModalOpen(false);
+      setDetailsModalOpen(true);
     } catch (error) {
       console.error("Error saving vehicle details:", error);
       setErrorMsg("Failed to save vehicle. Please try again.");
+    }
+  };
+
+  const handleDeleteVehicle = async () => {
+    if (!selectedVehicle || !selectedVehicle.id) return;
+    try {
+      await deleteDoc(doc(db, "vehicles", selectedVehicle.id));
+      setSuccessMsg("Vehicle deleted successfully!");
+      setTimeout(() => setSuccessMsg(""), 3500);
+      await fetchVehicles();
+      setDeleteConfirmationOpen(false);
+      setEditModalOpen(false);
+      setDetailsModalOpen(false);
+      setSelectedVehicle(null);
+    } catch (error) {
+      console.error("Error deleting vehicle:", error);
+      setErrorMsg("Failed to delete vehicle. Please try again.");
     }
   };
 
@@ -547,10 +569,10 @@ export default function VehiclePage() {
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Chassis Number</label>
                 <input
                   required
-                  type="number"
+                  type="text"
                   value={form.chassisNumber}
                   onChange={(e) => setForm({ ...form, chassisNumber: e.target.value })}
-                  placeholder="e.g. 123456789"
+                  placeholder="e.g. CH123456789"
                   className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
                 />
               </div>
@@ -559,10 +581,10 @@ export default function VehiclePage() {
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Engine Number</label>
                 <input
                   required
-                  type="number"
+                  type="text"
                   value={form.engineNumber}
                   onChange={(e) => setForm({ ...form, engineNumber: e.target.value })}
-                  placeholder="e.g. 987654321"
+                  placeholder="e.g. EN987654321"
                   className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
                 />
               </div>
@@ -574,16 +596,21 @@ export default function VehiclePage() {
                     value={form.truckType}
                     onChange={(e) => {
                       const val = e.target.value;
+                      let payloadCapacity = 5;
+                      if (val === "M923") payloadCapacity = 5;
+                      else if (val === "KM450") payloadCapacity = 1.25;
+                      else if (val === "KM250") payloadCapacity = 2.5;
                       setForm({
                         ...form,
                         truckType: val,
-                        payloadCapacity: val === "M923" ? 5 : 1.25
+                        payloadCapacity
                       });
                     }}
                     className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
                   >
                     <option value="M923">M923 (5.0 Tons)</option>
                     <option value="KM450">KM450 (1.25 Tons)</option>
+                    <option value="KM250">KM250 (2.5 Tons)</option>
                   </select>
                 </div>
                 <div>
@@ -647,8 +674,9 @@ export default function VehiclePage() {
                     <input
                       required
                       type="number"
+                      step="0.01"
                       value={form.payloadCapacity || ""}
-                      onChange={(e) => setForm({ ...form, payloadCapacity: parseInt(e.target.value) || 0 })}
+                      onChange={(e) => setForm({ ...form, payloadCapacity: parseFloat(e.target.value) || 0 })}
                       className="w-full rounded-xl border border-slate-200 pl-4 pr-12 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 uppercase">tons</span>
@@ -820,13 +848,18 @@ export default function VehiclePage() {
                   value={selectedVehicle.truckType || ""}
                   onChange={(e) => {
                     const val = e.target.value;
+                    let payloadCapacity = 5;
+                    if (val === "M923") payloadCapacity = 5;
+                    else if (val === "KM450") payloadCapacity = 1.25;
+                    else if (val === "KM250") payloadCapacity = 2.5;
                     handleEditChange("truckType", val);
-                    handleEditChange("payloadCapacity", val === "M923" ? 5 : 1.25);
+                    handleEditChange("payloadCapacity", payloadCapacity);
                   }}
                   className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
                 >
                   <option value="M923">M923</option>
                   <option value="KM450">KM450</option>
+                  <option value="KM250">KM250</option>
                 </select>
               </div>
               <div>
@@ -843,9 +876,9 @@ export default function VehiclePage() {
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Chassis Number</label>
                 <input
                   required
-                  type="number"
+                  type="text"
                   value={selectedVehicle.chassisNumber || ""}
-                  onChange={(e) => handleEditChange("chassisNumber", parseInt(e.target.value))}
+                  onChange={(e) => handleEditChange("chassisNumber", e.target.value)}
                   className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
                 />
               </div>
@@ -853,9 +886,9 @@ export default function VehiclePage() {
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Engine Number</label>
                 <input
                   required
-                  type="number"
+                  type="text"
                   value={selectedVehicle.engineNumber || ""}
-                  onChange={(e) => handleEditChange("engineNumber", parseInt(e.target.value))}
+                  onChange={(e) => handleEditChange("engineNumber", e.target.value)}
                   className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
                 />
               </div>
@@ -912,17 +945,27 @@ export default function VehiclePage() {
               <div className="flex gap-3 pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setCancelConfirmationOpen(true)}
-                  className="flex-1 rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all"
+                  onClick={() => setDeleteConfirmationOpen(true)}
+                  className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-600 hover:bg-rose-100 transition-all flex items-center gap-2"
                 >
-                  Cancel
+                  <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>delete</span>
+                  Delete
                 </button>
-                <button
-                  type="submit"
-                  className="flex-1 rounded-xl bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/30 hover:shadow-xl active:scale-95 transition-all"
-                >
-                  Save Changes
-                </button>
+                <div className="flex-1 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setCancelConfirmationOpen(true)}
+                    className="flex-1 rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 rounded-xl bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/30 hover:shadow-xl active:scale-95 transition-all"
+                  >
+                    Save Changes
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -994,10 +1037,8 @@ export default function VehiclePage() {
               <div className="flex gap-3">
                 <button
                   onClick={async () => {
-                    await handleConfirmSave();
                     setCancelConfirmationOpen(false);
-                    setEditModalOpen(false);
-                    setDetailsModalOpen(true);
+                    await handleConfirmSave();
                   }}
                   className="flex-1 rounded-lg bg-emerald-500 py-2.5 text-sm font-bold text-white hover:bg-emerald-600 transition-all"
                 >
@@ -1019,6 +1060,51 @@ export default function VehiclePage() {
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmationOpen && selectedVehicle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            onClick={() => setDeleteConfirmationOpen(false)}
+          />
+          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
+            <div className="bg-gradient-to-r from-rose-600 to-rose-700 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-rose-200" style={{ fontSize: "1.5rem" }}>
+                  warning
+                </span>
+                <h3 className="text-lg font-bold text-white">Delete Vehicle</h3>
+              </div>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-slate-600 mb-4">
+                Are you sure you want to delete vehicle <span className="font-bold text-slate-900">{selectedVehicle.codename}</span>?
+              </p>
+              <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-3 mb-4">
+                <span className="material-symbols-outlined text-xs" style={{ fontSize: "0.9rem" }}>info</span>
+                {" "}This action cannot be undone. The vehicle will be permanently removed from the system.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setDeleteConfirmationOpen(false)}
+                  className="flex-1 rounded-lg border-2 border-slate-300 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteVehicle}
+                  className="flex-1 rounded-lg bg-rose-500 py-2.5 text-sm font-bold text-white hover:bg-rose-600 transition-all flex items-center justify-center gap-2"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>delete</span>
+                  Delete Vehicle
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx>{`
         @keyframes fade-in {
           from { opacity: 0; transform: translateY(10px); }
