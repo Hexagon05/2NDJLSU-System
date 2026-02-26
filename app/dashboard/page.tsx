@@ -111,15 +111,7 @@ export default function Dashboard() {
     { title: "Emergency Alerts", value: "3", icon: "warning_amber", color: "from-rose-500 to-red-700", glow: "shadow-rose-500/30" },
   ];
 
-  const activities = [
-    { type: "Emergency Alert", icon: "crisis_alert", iconColor: "text-rose-400", time: "Just now" },
-    { type: "Completed Supplies", icon: "task_alt", iconColor: "text-emerald-400", time: "2 mins ago" },
-    { type: "Ongoing Deliveries", icon: "deployed_code", iconColor: "text-amber-400", time: "5 mins ago" },
-    { type: "Completed Supplies", icon: "task_alt", iconColor: "text-emerald-400", time: "8 mins ago" },
-    { type: "Dispatch Started", icon: "local_shipping", iconColor: "text-blue-400", time: "8 mins ago" },
-    { type: "Emergency Alert", icon: "crisis_alert", iconColor: "text-rose-400", time: "12 mins ago" },
-    { type: "Completed Supplies", icon: "task_alt", iconColor: "text-emerald-400", time: "15 mins ago" },
-  ];
+  const activities: { type: string; icon: string; iconColor: string; time: string }[] = [];
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
