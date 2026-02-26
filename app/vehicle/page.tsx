@@ -70,6 +70,7 @@ export default function VehiclePage() {
     vehicleCondition: "New",
     odometer: 0,
     imageUrl: "",
+    status: "Serviceable",
   });
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [originalVehicle, setOriginalVehicle] = useState<Vehicle | null>(null);
@@ -236,7 +237,6 @@ export default function VehiclePage() {
         ...form,
         personnelName,
         dateAdded: today,
-        status: "Active",
         createdAt: Timestamp.now(),
         imageUrl: imageUrl || "",
       });
@@ -256,6 +256,7 @@ export default function VehiclePage() {
         vehicleCondition: "New",
         odometer: 0,
         imageUrl: "",
+        status: "Serviceable",
       });
       setImageFile(null);
       setImagePreview("");
@@ -389,7 +390,8 @@ export default function VehiclePage() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case "Active": return "bg-emerald-100 text-emerald-800 border border-emerald-200";
+      case "Serviceable": return "bg-emerald-100 text-emerald-800 border border-emerald-200";
+      case "Unserviceable": return "bg-rose-100 text-rose-800 border border-rose-200";
       case "In Transit": return "bg-blue-100 text-blue-800 border border-blue-200";
       case "Maintenance": return "bg-amber-100 text-amber-800 border border-amber-200";
       default: return "bg-slate-100 text-slate-800 border border-slate-200";
@@ -398,7 +400,8 @@ export default function VehiclePage() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case "Active": return "check_circle";
+      case "Serviceable": return "check_circle";
+      case "Unserviceable": return "cancel";
       case "In Transit": return "local_shipping";
       case "Maintenance": return "build";
       default: return "circle";
@@ -610,11 +613,11 @@ export default function VehiclePage() {
                         )}
                         {/* Status Badge - Top Right */}
                         <div className="absolute top-3 right-3">
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold shadow-lg backdrop-blur-sm ${getStatusBadge(vehicle.status || "Active")}`}>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold shadow-lg backdrop-blur-sm ${getStatusBadge(vehicle.status || "Serviceable")}`}>
                             <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>
-                              {getStatusIcon(vehicle.status || "Active")}
+                              {getStatusIcon(vehicle.status || "Serviceable")}
                             </span>
-                            {vehicle.status || "Active"}
+                            {vehicle.status || "Serviceable"}
                           </span>
                         </div>
                       </div>
@@ -714,9 +717,9 @@ export default function VehiclePage() {
                           {vehicle.truckType}
                         </td>
                         <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${getStatusBadge(vehicle.status || "Active")}`}>
-                            <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>{getStatusIcon(vehicle.status || "Active")}</span>
-                            {vehicle.status || "Active"}
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${getStatusBadge(vehicle.status || "Serviceable")}`}>
+                            <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>{getStatusIcon(vehicle.status || "Serviceable")}</span>
+                            {vehicle.status || "Serviceable"}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-600">
@@ -954,6 +957,26 @@ export default function VehiclePage() {
                 </div>
               </div>
 
+              {/* Vehicle Status Checkbox */}
+              <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.status === "Serviceable"}
+                    onChange={(e) => setForm({ ...form, status: e.target.checked ? "Serviceable" : "Unserviceable" })}
+                    className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <span className="block text-sm font-bold text-slate-900">Vehicle is Serviceable</span>
+                    <span className="block text-xs text-slate-500 mt-0.5">Check if the vehicle is currently serviceable and ready for deployment</span>
+                  </div>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${form.status === "Serviceable" ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-rose-100 text-rose-800 border border-rose-200"}`}>
+                    <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>{form.status === "Serviceable" ? "check_circle" : "cancel"}</span>
+                    {form.status}
+                  </span>
+                </label>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Gas Tank Capacity</label>
@@ -1086,9 +1109,9 @@ export default function VehiclePage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Status</label>
-                  <span className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold ${getStatusBadge(selectedVehicle.status || "Active")}`}>
-                    <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>{getStatusIcon(selectedVehicle.status || "Active")}</span>
-                    {selectedVehicle.status || "Active"}
+                  <span className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold ${getStatusBadge(selectedVehicle.status || "Serviceable")}`}>
+                    <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>{getStatusIcon(selectedVehicle.status || "Serviceable")}</span>
+                    {selectedVehicle.status || "Serviceable"}
                   </span>
                 </div>
                 <div className="col-span-2 grid grid-cols-2 gap-6">
@@ -1355,6 +1378,26 @@ export default function VehiclePage() {
                           className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:bg-slate-50 disabled:text-slate-400"
                         />
                       </div>
+                    </div>
+
+                    {/* Vehicle Status Checkbox */}
+                    <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedVehicle.status === "Serviceable"}
+                          onChange={(e) => handleEditChange("status", e.target.checked ? "Serviceable" : "Unserviceable")}
+                          className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
+                        />
+                        <div className="flex-1">
+                          <span className="block text-sm font-bold text-slate-900">Vehicle is Serviceable</span>
+                          <span className="block text-xs text-slate-500 mt-0.5">Check if the vehicle is currently serviceable and ready for deployment</span>
+                        </div>
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${selectedVehicle.status === "Serviceable" ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-rose-100 text-rose-800 border border-rose-200"}`}>
+                          <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>{selectedVehicle.status === "Serviceable" ? "check_circle" : "cancel"}</span>
+                          {selectedVehicle.status}
+                        </span>
+                      </label>
                     </div>
                   </div>
                 </div>

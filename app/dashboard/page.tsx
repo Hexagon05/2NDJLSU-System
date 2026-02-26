@@ -13,6 +13,8 @@ import {
   limit,
   onSnapshot,
   Timestamp,
+  where,
+  getDocs,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -58,6 +60,12 @@ export default function Dashboard() {
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [selectedDispatch, setSelectedDispatch] = useState<Dispatch | null>(null);
   const [dispatchRefresh, setDispatchRefresh] = useState(0);
+  const [metrics, setMetrics] = useState({
+    totalActiveVehicles: 0,
+    ongoingDeliveries: 0,
+    completedSupplies: 0,
+    emergencyAlerts: 0,
+  });
 
   // Live dispatches listener
   useEffect(() => {
@@ -73,6 +81,54 @@ export default function Dashboard() {
     });
     return () => unsub();
   }, [dispatchRefresh]);
+
+  // Fetch metrics data
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        // Count serviceable vehicles
+        const vehiclesSnap = await getDocs(
+          query(collection(db, "vehicles"), where("status", "==", "Serviceable"))
+        );
+        const totalActiveVehicles = vehiclesSnap.size;
+
+        // Count dispatches by status
+        const allDispatchesSnap = await getDocs(collection(db, "dispatches"));
+        let ongoingDeliveries = 0;
+        let completedSupplies = 0;
+        let emergencyAlerts = 0;
+
+        allDispatchesSnap.forEach((doc) => {
+          const data = doc.data();
+          const status = data.status;
+          
+          if (status === "Pending" || status === "In Transit") {
+            ongoingDeliveries++;
+          } else if (status === "Completed") {
+            completedSupplies++;
+          } else if (status === "Cancelled") {
+            emergencyAlerts++;
+          }
+        });
+
+        setMetrics({
+          totalActiveVehicles,
+          ongoingDeliveries,
+          completedSupplies,
+          emergencyAlerts,
+        });
+      } catch (error) {
+        console.error("Error fetching metrics:", error);
+      }
+    };
+
+    if (user) {
+      fetchMetrics();
+      // Refresh metrics every 30 seconds
+      const interval = setInterval(fetchMetrics, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [user, dispatchRefresh]);
 
   if (loading) {
     return (
@@ -104,11 +160,11 @@ export default function Dashboard() {
     { name: "History", icon: "history", href: "/history", active: false },
   ];
 
-  const metrics = [
-    { title: "Total Active Vehicle", value: "24", icon: "local_shipping", color: "from-violet-600 to-violet-800", glow: "shadow-violet-500/30" },
-    { title: "Ongoing Deliveries", value: "12", icon: "deployed_code", color: "from-amber-500 to-orange-700", glow: "shadow-amber-500/30" },
-    { title: "Completed Supplies", value: "156", icon: "task_alt", color: "from-emerald-500 to-green-700", glow: "shadow-emerald-500/30" },
-    { title: "Emergency Alerts", value: "3", icon: "warning_amber", color: "from-rose-500 to-red-700", glow: "shadow-rose-500/30" },
+  const metricCards = [
+    { title: "Total Serviceable Vehicle", value: metrics.totalActiveVehicles.toString(), icon: "local_shipping", color: "from-violet-600 to-violet-800", glow: "shadow-violet-500/30" },
+    { title: "Ongoing Deliveries", value: metrics.ongoingDeliveries.toString(), icon: "deployed_code", color: "from-amber-500 to-orange-700", glow: "shadow-amber-500/30" },
+    { title: "Completed Supplies", value: metrics.completedSupplies.toString(), icon: "task_alt", color: "from-emerald-500 to-green-700", glow: "shadow-emerald-500/30" },
+    { title: "Emergency Alerts", value: metrics.emergencyAlerts.toString(), icon: "warning_amber", color: "from-rose-500 to-red-700", glow: "shadow-rose-500/30" },
   ];
 
   const activities: { type: string; icon: string; iconColor: string; time: string }[] = [];
@@ -238,7 +294,7 @@ export default function Dashboard() {
         <main className="flex-1 overflow-auto p-6 flex flex-col gap-6 min-h-0">
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {metrics.map((metric, index) => (
+            {metricCards.map((metric, index) => (
               <div
                 key={metric.title}
                 className={`bg-gradient-to-br ${metric.color} rounded-2xl p-6 shadow-xl ${metric.glow} transition-all duration-300 hover:shadow-2xl hover:scale-105 animate-fade-in text-white`}

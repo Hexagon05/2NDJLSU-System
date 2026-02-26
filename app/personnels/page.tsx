@@ -606,11 +606,21 @@ export default function PersonnelsPage() {
                                                 <div className="p-5">
                                                     {/* Avatar + name */}
                                                     <div className="flex flex-col items-center text-center mb-4">
-                                                        <div
-                                                            className={`flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br ${getAvatarColor(idx)} text-white text-xl font-bold shadow-lg mb-3`}
-                                                        >
-                                                            {initials(officer)}
-                                                        </div>
+                                                        {officer.imageUrl ? (
+                                                            <div className="relative h-20 w-20 rounded-full overflow-hidden shadow-lg mb-3 ring-2 ring-slate-200">
+                                                                <img
+                                                                    src={officer.imageUrl}
+                                                                    alt={`${officer.firstName} ${officer.lastName}`}
+                                                                    className="h-full w-full object-cover"
+                                                                />
+                                                            </div>
+                                                        ) : (
+                                                            <div
+                                                                className={`flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br ${getAvatarColor(idx)} text-white text-2xl font-bold shadow-lg mb-3`}
+                                                            >
+                                                                {initials(officer)}
+                                                            </div>
+                                                        )}
                                                         <h3 className="font-bold text-slate-900 text-base leading-tight">
                                                             {officer.rank} {officer.lastName}, {officer.firstName}{" "}
                                                             {officer.middleInitial}.
@@ -690,11 +700,21 @@ export default function PersonnelsPage() {
                                                 >
                                                     <td className="px-6 py-4">
                                                         <div className="flex items-center gap-3">
-                                                            <div
-                                                                className={`flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br ${getAvatarColor(idx)} text-white text-sm font-bold flex-shrink-0`}
-                                                            >
-                                                                {initials(officer)}
-                                                            </div>
+                                                            {officer.imageUrl ? (
+                                                                <div className="relative h-11 w-11 rounded-full overflow-hidden flex-shrink-0 ring-2 ring-slate-200">
+                                                                    <img
+                                                                        src={officer.imageUrl}
+                                                                        alt={`${officer.firstName} ${officer.lastName}`}
+                                                                        className="h-full w-full object-cover"
+                                                                    />
+                                                                </div>
+                                                            ) : (
+                                                                <div
+                                                                    className={`flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br ${getAvatarColor(idx)} text-white text-base font-bold flex-shrink-0`}
+                                                                >
+                                                                    {initials(officer)}
+                                                                </div>
+                                                            )}
                                                             <span className="text-sm font-bold text-slate-900">
                                                                 {officer.lastName}, {officer.firstName} {officer.middleInitial}.
                                                             </span>
@@ -1098,16 +1118,16 @@ export default function PersonnelsPage() {
 
             {/* ── Personnel Details Modal ── */}
             {detailsModalOpen && selectedPersonnel && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
                     <div
                         className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
                         onClick={() => setDetailsModalOpen(false)}
                     />
-                    <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
-                        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between">
+                    <div className="relative w-full max-w-5xl my-8 rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
+                        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-3.5 flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/20 border border-blue-500/30">
-                                    <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "1.3rem" }}>person</span>
+                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/20 border border-blue-500/30">
+                                    <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "1.2rem" }}>person</span>
                                 </div>
                                 <h2 className="text-lg font-bold text-white">Personnel Details</h2>
                             </div>
@@ -1118,63 +1138,75 @@ export default function PersonnelsPage() {
                                 <span className="material-symbols-outlined">close</span>
                             </button>
                         </div>
-                        <div className="p-6 max-h-[70vh] overflow-y-auto">
-                            {/* Profile Image Section */}
-                            {selectedPersonnel.imageUrl && (
-                                <div className="flex justify-center mb-6">
-                                    <div className="relative w-48 h-48 rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
-                                        <img
-                                            src={selectedPersonnel.imageUrl}
-                                            alt={`${selectedPersonnel.firstName} ${selectedPersonnel.lastName}`}
-                                            className="w-full h-full object-cover"
-                                        />
+                        <div className="p-6">
+                            <div className="grid grid-cols-12 gap-6">
+                                {/* Profile Image Section - Left side */}
+                                <div className="col-span-4 flex flex-col items-center">
+                                    {selectedPersonnel.imageUrl ? (
+                                        <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg mb-4">
+                                            <img
+                                                src={selectedPersonnel.imageUrl}
+                                                alt={`${selectedPersonnel.firstName} ${selectedPersonnel.lastName}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="w-full aspect-square rounded-2xl border-4 border-slate-200 bg-slate-100 flex items-center justify-center mb-4">
+                                            <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "5rem" }}>person</span>
+                                        </div>
+                                    )}
+                                    <div className="text-center w-full">
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Personnel ID</label>
+                                        <p className="text-sm text-slate-900 font-mono font-bold bg-slate-50 rounded-lg p-2">{selectedPersonnel.username || "N/A"}</p>
                                     </div>
                                 </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">First Name</label>
-                                    <p className="text-base text-slate-900 font-bold bg-slate-50 rounded-lg p-3">{selectedPersonnel.firstName}</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Last Name</label>
-                                    <p className="text-base text-slate-900 font-bold bg-slate-50 rounded-lg p-3">{selectedPersonnel.lastName}</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Middle Initial</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.middleInitial || "N/A"}</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Rank</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.rank}</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Position</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.position}</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Contact Number</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.contactNo || "N/A"}</p>
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Email</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.email || "N/A"}</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Date of Birth</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.dateOfBirth || "N/A"}</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Date Added</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.dateAdded}</p>
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Current Address</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.currentAddress || "N/A"}</p>
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Permanent Address</label>
-                                    <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedPersonnel.permanentAddress || "N/A"}</p>
+                                
+                                {/* Details Grid - Right side */}
+                                <div className="col-span-8 grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">First Name</label>
+                                        <p className="text-sm text-slate-900 font-bold bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.firstName}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Last Name</label>
+                                        <p className="text-sm text-slate-900 font-bold bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.lastName}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Middle Initial</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.middleInitial || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Rank</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.rank}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Position</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.position}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Contact Number</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.contactNo || "N/A"}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Email</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.email || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Date of Birth</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.dateOfBirth || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Date Added</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.dateAdded}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Current Address</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.currentAddress || "N/A"}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Permanent Address</label>
+                                        <p className="text-sm text-slate-900 font-medium bg-slate-50 rounded-lg p-2.5">{selectedPersonnel.permanentAddress || "N/A"}</p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
