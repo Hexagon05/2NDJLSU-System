@@ -81,6 +81,7 @@ export default function VehiclePage() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
+  const [viewMode, setViewMode] = useState<"table" | "card">("card");
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -542,6 +543,31 @@ export default function VehiclePage() {
                   className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-slate-900 placeholder-slate-400 shadow-sm transition-all focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 />
               </div>
+              {/* View Toggle */}
+              <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                <button
+                  onClick={() => setViewMode("card")}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+                    viewMode === "card"
+                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md"
+                      : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>grid_view</span>
+                  Cards
+                </button>
+                <button
+                  onClick={() => setViewMode("table")}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+                    viewMode === "table"
+                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md"
+                      : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>table_rows</span>
+                  Table
+                </button>
+              </div>
               <button
                 onClick={() => setModalOpen(true)}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-white text-sm font-semibold shadow-lg shadow-blue-500/30 transition-all hover:shadow-xl active:scale-95"
@@ -551,7 +577,99 @@ export default function VehiclePage() {
               </button>
             </div>
 
+            {/* Card View */}
+            {viewMode === "card" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {filteredVehicles.length === 0 ? (
+                  <div className="col-span-full flex flex-col items-center justify-center py-16 text-slate-400">
+                    <span className="material-symbols-outlined block text-6xl mb-4">local_shipping</span>
+                    <p className="text-lg font-medium">No vehicles found. Add one to get started.</p>
+                  </div>
+                ) : (
+                  filteredVehicles.map((vehicle, index) => (
+                    <div
+                      key={vehicle.id}
+                      className="group relative bg-white rounded-2xl border border-slate-200 shadow-lg hover:shadow-2xl transition-all duration-300 cursor-pointer overflow-hidden animate-fade-in"
+                      style={{ animationDelay: `${index * 0.05}s` }}
+                      onClick={() => handleViewDetails(vehicle)}
+                    >
+                      {/* Vehicle Image */}
+                      <div className="relative aspect-[4/3] bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden">
+                        {vehicle.imageUrl ? (
+                          <img
+                            src={vehicle.imageUrl}
+                            alt={vehicle.codename}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <span className="material-symbols-outlined text-slate-300" style={{ fontSize: "4rem" }}>
+                              local_shipping
+                            </span>
+                          </div>
+                        )}
+                        {/* Status Badge - Top Right */}
+                        <div className="absolute top-3 right-3">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold shadow-lg backdrop-blur-sm ${getStatusBadge(vehicle.status || "Active")}`}>
+                            <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>
+                              {getStatusIcon(vehicle.status || "Active")}
+                            </span>
+                            {vehicle.status || "Active"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Vehicle Info */}
+                      <div className="p-5 space-y-3">
+                        {/* Codename & Plate */}
+                        <div>
+                          <h3 className="text-xl font-bold text-slate-900 mb-1 truncate group-hover:text-blue-600 transition-colors">
+                            {vehicle.codename}
+                          </h3>
+                          <p className="text-sm font-mono text-slate-500 italic truncate">
+                            {vehicle.plate}
+                          </p>
+                        </div>
+
+                        {/* Personnel */}
+                        <div className="flex items-center gap-2 text-sm text-slate-600 border-t border-slate-100 pt-3">
+                          <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1.1rem" }}>
+                            person
+                          </span>
+                          <span className="truncate font-medium">{vehicle.personnelName}</span>
+                        </div>
+
+                        {/* Vehicle Type */}
+                        <div className="flex items-center gap-2 text-sm text-slate-600">
+                          <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1.1rem" }}>
+                            directions_car
+                          </span>
+                          <span className="font-semibold">{vehicle.truckType}</span>
+                        </div>
+
+                        {/* Capacity Info */}
+                        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+                          <div className="bg-slate-50 rounded-lg p-2.5">
+                            <p className="text-xs text-slate-500 font-medium mb-0.5">Gas Tank</p>
+                            <p className="text-sm font-bold text-slate-900">{vehicle.gasTankCapacity} L</p>
+                          </div>
+                          <div className="bg-slate-50 rounded-lg p-2.5">
+                            <p className="text-xs text-slate-500 font-medium mb-0.5">Payload</p>
+                            <p className="text-sm font-bold text-slate-900">{vehicle.payloadCapacity} tons</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Hover Overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-blue-600/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
             {/* Table */}
+            {viewMode === "table" && (
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-slate-800 to-slate-900 text-white">
@@ -613,6 +731,7 @@ export default function VehiclePage() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         </div>
       </div>
