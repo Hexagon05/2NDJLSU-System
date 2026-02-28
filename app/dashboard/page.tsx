@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import { OpenStreetMap } from "@/components/OpenStreetMap";
 import DispatchModal from "@/components/DispatchModal";
 import DispatchDetailModal from "@/components/DispatchDetailModal";
@@ -195,13 +196,19 @@ export default function Dashboard() {
         {/* Logo */}
         <div className={`flex h-16 items-center border-b border-slate-700/50 px-3 ${sidebarOpen ? 'justify-between' : 'justify-center'}`}>
           <div className="flex items-center gap-3 min-w-0">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 text-white shadow-lg shadow-emerald-500/30 flex-shrink-0">
-              <span className="material-symbols-outlined" style={{ fontSize: "1.4rem" }}>local_shipping</span>
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white shadow-lg flex-shrink-0 overflow-hidden">
+              <Image
+                src="/logo.png"
+                alt="2nd JLSU Logo"
+                width={44}
+                height={44}
+                className="object-contain"
+              />
             </div>
             {sidebarOpen && (
               <div className="animate-fade-in overflow-hidden">
-                <p className="font-bold text-white tracking-wide">Log Truck</p>
-                <p className="text-xs text-slate-400">v2.0</p>
+                <p className="font-bold text-white tracking-wide text-lg">2nd JLSU</p>
+                <p className="text-xs text-slate-400">Log Truck System</p>
               </div>
             )}
           </div>

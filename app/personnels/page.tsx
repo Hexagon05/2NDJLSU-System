@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import { db } from "@/lib/firebase";
 import {
     collection,
@@ -385,15 +386,19 @@ export default function PersonnelsPage() {
                         }`}
                 >
                     <div className="flex items-center gap-3 min-w-0">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 text-white shadow-lg shadow-emerald-500/30 flex-shrink-0">
-                            <span className="material-symbols-outlined" style={{ fontSize: "1.4rem" }}>
-                                local_shipping
-                            </span>
+                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white shadow-lg flex-shrink-0 overflow-hidden">
+                            <Image
+                                src="/logo.png"
+                                alt="2nd JLSU Logo"
+                                width={44}
+                                height={44}
+                                className="object-contain"
+                            />
                         </div>
                         {sidebarOpen && (
                             <div className="animate-fade-in overflow-hidden">
-                                <p className="font-bold text-white tracking-wide">Log Truck</p>
-                                <p className="text-xs text-slate-400">v2.0</p>
+                                <p className="font-bold text-white tracking-wide text-lg">2nd JLSU</p>
+                                <p className="text-xs text-slate-400">Log Truck System</p>
                             </div>
                         )}
                     </div>
@@ -597,40 +602,53 @@ export default function PersonnelsPage() {
                                         <p className="text-sm">Add one using the button above.</p>
                                     </div>
                                 ) : (
-                                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                         {filtered.map((officer, idx) => (
                                             <button
                                                 key={officer.id}
                                                 onClick={() => handleViewDetails(officer)}
-                                                className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1 animate-fade-in text-left outline-none cursor-pointer"
+                                                className="group relative overflow-hidden rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-white via-slate-50 to-gray-50 shadow-xl shadow-slate-900/10 hover:shadow-2xl hover:shadow-slate-900/20 transition-all duration-500 hover:-translate-y-2 animate-fade-in text-left outline-none cursor-pointer"
                                                 style={{ animationDelay: `${idx * 0.06}s` }}
                                             >
-                                                {/* Card top accent */}
-                                                <div className={`h-2 w-full bg-gradient-to-r ${getAvatarColor(idx)}`} />
-                                                <div className="p-5">
+                                                {/* Decorative gradient background on hover */}
+                                                <div className="absolute inset-0 bg-gradient-to-br from-teal-50/50 via-emerald-50/30 to-slate-50 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                                                
+                                                {/* Animated shimmer glow */}
+                                                <div className="absolute inset-0 opacity-0 group-hover:opacity-20 transition-opacity duration-500 bg-gradient-to-r from-transparent via-teal-600/30 to-transparent blur-xl" />
+                                                
+                                                {/* Card top accent with shimmer effect - dark navy green */}
+                                                <div className="relative h-3 w-full bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 overflow-hidden">
+                                                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
+                                                </div>
+                                                
+                                                <div className="relative p-6">
                                                     {/* Avatar + name */}
-                                                    <div className="flex flex-col items-center text-center mb-4">
+                                                    <div className="flex flex-col items-center text-center mb-5">
                                                         {officer.imageUrl ? (
-                                                            <div className="relative h-20 w-20 rounded-full overflow-hidden shadow-lg mb-3 ring-2 ring-slate-200">
+                                                            <div className="relative h-28 w-28 rounded-2xl overflow-hidden shadow-2xl shadow-slate-900/30 mb-4 ring-4 ring-slate-300 group-hover:ring-teal-800/40 transition-all duration-300 group-hover:scale-110">
                                                                 <img
                                                                     src={officer.imageUrl}
                                                                     alt={`${officer.firstName} ${officer.lastName}`}
                                                                     className="h-full w-full object-cover"
                                                                 />
+                                                                {/* Image overlay on hover */}
+                                                                <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                                                             </div>
                                                         ) : (
-                                                            <div
-                                                                className={`flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br ${getAvatarColor(idx)} text-white text-2xl font-bold shadow-lg mb-3`}
-                                                            >
-                                                                {initials(officer)}
+                                                            <div className="flex h-28 w-28 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 text-white text-4xl font-black shadow-2xl shadow-slate-900/40 mb-4 ring-4 ring-slate-300 group-hover:ring-teal-800/40 transition-all duration-300 group-hover:scale-110 relative overflow-hidden">
+                                                                {/* Subtle gradient overlay */}
+                                                                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
+                                                                <span className="relative z-10">{initials(officer)}</span>
                                                             </div>
                                                         )}
-                                                        <h3 className="font-bold text-slate-900 text-base leading-tight">
+                                                        
+                                                        <h3 className="font-black text-slate-900 text-lg leading-tight mb-3 group-hover:text-teal-900 transition-colors duration-300">
                                                             {officer.rank} {officer.lastName}, {officer.firstName}{" "}
                                                             {officer.middleInitial}.
                                                         </h3>
-                                                        <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 border border-slate-200">
-                                                            <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>
+                                                        
+                                                        <span className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-slate-900/30 border border-slate-700 group-hover:shadow-xl group-hover:shadow-slate-900/50 group-hover:scale-105 transition-all duration-300">
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>
                                                                 badge
                                                             </span>
                                                             {officer.position}
@@ -638,24 +656,39 @@ export default function PersonnelsPage() {
                                                     </div>
 
                                                     {/* Details */}
-                                                    <div className="space-y-2 text-xs text-slate-600 border-t border-slate-100 pt-4">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1rem" }}>
-                                                                call
-                                                            </span>
-                                                            <span>{officer.contactNo || "—"}</span>
+                                                    <div className="space-y-3 text-sm text-slate-700 border-t-2 border-slate-200 pt-5 mt-4">
+                                                        <div className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-100 transition-all duration-200 group/item">
+                                                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 shadow-lg shadow-slate-900/30 group-hover/item:shadow-slate-900/50 transition-all duration-300">
+                                                                <span className="material-symbols-outlined text-white" style={{ fontSize: "1.2rem" }}>
+                                                                    call
+                                                                </span>
+                                                            </div>
+                                                            <span className="font-bold text-slate-900">{officer.contactNo || "—"}</span>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1rem" }}>
-                                                                mail
-                                                            </span>
-                                                            <span className="truncate">{officer.email || "—"}</span>
+                                                        <div className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-100 transition-all duration-200 group/item">
+                                                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 shadow-lg shadow-slate-900/30 group-hover/item:shadow-slate-900/50 transition-all duration-300">
+                                                                <span className="material-symbols-outlined text-white" style={{ fontSize: "1.2rem" }}>
+                                                                    mail
+                                                                </span>
+                                                            </div>
+                                                            <span className="truncate font-bold text-slate-900">{officer.email || "—"}</span>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1rem" }}>
-                                                                calendar_today
+                                                        <div className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-100 transition-all duration-200 group/item">
+                                                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 shadow-lg shadow-slate-900/30 group-hover/item:shadow-slate-900/50 transition-all duration-300">
+                                                                <span className="material-symbols-outlined text-white" style={{ fontSize: "1.2rem" }}>
+                                                                    calendar_today
+                                                                </span>
+                                                            </div>
+                                                            <span className="font-semibold text-slate-800 text-xs">Added: {officer.dateAdded}</span>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Hover indicator with dark navy-green gradient */}
+                                                    <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-2 group-hover:translate-y-0">
+                                                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 text-white shadow-xl shadow-slate-900/60">
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "1.4rem" }}>
+                                                                arrow_forward
                                                             </span>
-                                                            <span>Added: {officer.dateAdded}</span>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -754,22 +787,23 @@ export default function PersonnelsPage() {
                     />
 
                     {/* Modal */}
-                    <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl animate-fade-in">
+                    <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl bg-white shadow-2xl animate-fade-in border border-emerald-200/50">
                         {/* Modal Header */}
-                        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 rounded-t-2xl">
-                            <div className="flex items-center gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/20 border border-emerald-500/30">
-                                    <span className="material-symbols-outlined text-emerald-400" style={{ fontSize: "1.2rem" }}>
+                        <div className="sticky top-0 z-10 flex items-center justify-between bg-gradient-to-r from-emerald-600 via-emerald-500 to-green-600 px-6 py-4 rounded-t-3xl relative overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 animate-shimmer"></div>
+                            <div className="relative flex items-center gap-3">
+                                <div className="h-10 w-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-lg">
+                                    <span className="material-symbols-outlined text-white" style={{ fontSize: "1.4rem" }}>
                                         person_add
                                     </span>
                                 </div>
-                                <h2 className="text-lg font-bold text-white tracking-tight">Add New Personnel</h2>
+                                <h2 className="text-base font-black text-white tracking-wide uppercase">Add New Personnel</h2>
                             </div>
                             <button
                                 onClick={handleCloseModal}
-                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+                                className="relative z-10 rounded-xl p-2.5 hover:bg-white/20 transition-all duration-300 text-white/80 hover:text-white group backdrop-blur-sm border border-white/10 hover:border-white/30"
                             >
-                                <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>close</span>
+                                <span className="material-symbols-outlined transition-transform group-hover:rotate-90 duration-300" style={{ fontSize: "1.5rem" }}>close</span>
                             </button>
                         </div>
 
@@ -1127,19 +1161,20 @@ export default function PersonnelsPage() {
                         className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
                         onClick={() => setDetailsModalOpen(false)}
                     />
-                    <div className="relative w-full max-w-5xl my-8 rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
-                        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-3.5 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/20 border border-blue-500/30">
-                                    <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "1.2rem" }}>person</span>
+                    <div className="relative w-full max-w-5xl my-8 rounded-3xl bg-white shadow-2xl animate-fade-in overflow-hidden border border-slate-200">
+                        <div className="bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 px-6 py-4 flex items-center justify-between relative overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 animate-shimmer"></div>
+                            <div className="relative flex items-center gap-3">
+                                <div className="h-10 w-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-lg">
+                                    <span className="material-symbols-outlined text-white" style={{ fontSize: "1.4rem" }}>person</span>
                                 </div>
-                                <h2 className="text-lg font-bold text-white">Personnel Details</h2>
+                                <h2 className="text-base font-black text-white tracking-wide uppercase">Personnel Details</h2>
                             </div>
                             <button
                                 onClick={() => setDetailsModalOpen(false)}
-                                className="text-slate-400 hover:text-white transition-colors"
+                                className="relative z-10 rounded-xl p-2.5 hover:bg-white/20 transition-all duration-300 text-white/80 hover:text-white group backdrop-blur-sm border border-white/10 hover:border-white/30"
                             >
-                                <span className="material-symbols-outlined">close</span>
+                                <span className="material-symbols-outlined transition-transform group-hover:rotate-90 duration-300" style={{ fontSize: "1.5rem" }}>close</span>
                             </button>
                         </div>
                         <div className="p-6">
@@ -1147,7 +1182,7 @@ export default function PersonnelsPage() {
                                 {/* Profile Image Section - Left side */}
                                 <div className="col-span-4 flex flex-col items-center">
                                     {selectedPersonnel.imageUrl ? (
-                                        <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg mb-4">
+                                        <div className="relative w-full aspect-square rounded-2xl border-4 border-slate-300 overflow-hidden shadow-2xl shadow-slate-900/30 mb-4 ring-4 ring-slate-200">
                                             <img
                                                 src={selectedPersonnel.imageUrl}
                                                 alt={`${selectedPersonnel.firstName} ${selectedPersonnel.lastName}`}
@@ -1155,13 +1190,13 @@ export default function PersonnelsPage() {
                                             />
                                         </div>
                                     ) : (
-                                        <div className="w-full aspect-square rounded-2xl border-4 border-slate-200 bg-slate-100 flex items-center justify-center mb-4">
+                                        <div className="w-full aspect-square rounded-2xl border-4 border-slate-200 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center mb-4 shadow-xl">
                                             <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "5rem" }}>person</span>
                                         </div>
                                     )}
                                     <div className="text-center w-full">
-                                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Personnel ID</label>
-                                        <p className="text-sm text-slate-900 font-mono font-bold bg-slate-50 rounded-lg p-2">{selectedPersonnel.username || "N/A"}</p>
+                                        <label className="block text-xs font-bold text-teal-900 uppercase mb-2 tracking-wider">Personnel ID</label>
+                                        <p className="text-sm text-slate-900 font-mono font-bold bg-gradient-to-r from-slate-100 to-slate-50 rounded-xl p-3 border-2 border-slate-300 shadow-sm">{selectedPersonnel.username || "N/A"}</p>
                                     </div>
                                 </div>
                                 
@@ -1218,7 +1253,7 @@ export default function PersonnelsPage() {
                             <button
                                 type="button"
                                 onClick={() => setDetailsModalOpen(false)}
-                                className="rounded-lg border-2 border-slate-200 py-2.5 px-6 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-all"
+                                className="rounded-xl border-2 border-slate-200 py-2.5 px-6 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-all"
                             >
                                 Close
                             </button>
@@ -1227,10 +1262,10 @@ export default function PersonnelsPage() {
                                     setDetailsModalOpen(false);
                                     setEditModalOpen(true);
                                 }}
-                                className="rounded-lg bg-blue-600 py-2.5 px-6 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 hover:shadow-xl hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2"
+                                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 py-2.5 px-6 text-sm font-bold text-white shadow-lg shadow-slate-900/30 hover:shadow-xl active:scale-95 transition-all"
                             >
                                 <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>edit</span>
-                                Edit
+                                Edit Personnel
                             </button>
                         </div>
                     </div>
@@ -1243,28 +1278,34 @@ export default function PersonnelsPage() {
                     <div
                         className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
                     />
-                    <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden max-h-[90vh] overflow-y-auto">
-                        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                            <h2 className="text-lg font-bold text-white">Edit Personnel Details</h2>
+                    <div className="relative w-full max-w-lg rounded-3xl bg-white shadow-2xl animate-fade-in overflow-hidden max-h-[90vh] overflow-y-auto border border-slate-300">
+                        <div className="bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 px-6 py-4 flex items-center justify-between sticky top-0 z-10 relative overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 animate-shimmer"></div>
+                            <div className="relative flex items-center gap-3">
+                                <div className="h-10 w-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-lg">
+                                    <span className="material-symbols-outlined text-white" style={{ fontSize: "1.4rem" }}>edit</span>
+                                </div>
+                                <h2 className="text-base font-black text-white tracking-wide uppercase">Edit Personnel</h2>
+                            </div>
                             <button
                                 onClick={() => {
                                     setCancelConfirmationOpen(true);
                                 }}
-                                className="text-slate-400 hover:text-white transition-colors"
+                                className="relative z-10 rounded-xl p-2.5 hover:bg-white/20 transition-all duration-300 text-white/80 hover:text-white group backdrop-blur-sm border border-white/10 hover:border-white/30"
                             >
-                                <span className="material-symbols-outlined">close</span>
+                                <span className="material-symbols-outlined transition-transform group-hover:rotate-90 duration-300" style={{ fontSize: "1.5rem" }}>close</span>
                             </button>
                         </div>
                         <form onSubmit={(e) => { e.preventDefault(); handleSaveChanges(); }} className="p-6 space-y-4">
                             {/* Profile Image Upload Section */}
-                            <div className="flex flex-col items-center border border-blue-200 bg-gradient-to-br from-blue-50/50 to-sky-50/30 rounded-2xl p-6 mb-4">
+                            <div className="flex flex-col items-center border-2 border-slate-300 bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-2xl p-6 mb-4">
                                 <label className="block text-sm font-bold text-slate-700 mb-3 uppercase tracking-wide">
                                     Profile Image
                                 </label>
                                 {/* Image Preview */}
                                 <div className="mb-4">
                                     {imagePreview ? (
-                                        <div className="relative w-40 h-40 rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
+                                        <div className="relative w-40 h-40 rounded-2xl border-4 border-slate-400 overflow-hidden shadow-lg">
                                             <img
                                                 src={imagePreview}
                                                 alt="Preview"
@@ -1285,8 +1326,8 @@ export default function PersonnelsPage() {
                                             </button>
                                         </div>
                                     ) : (
-                                        <div className="w-40 h-40 rounded-2xl border-4 border-dashed border-blue-300 bg-white flex items-center justify-center">
-                                            <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "4rem" }}>person</span>
+                                        <div className="w-40 h-40 rounded-2xl border-4 border-dashed border-slate-400 bg-white flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "4rem" }}>person</span>
                                         </div>
                                     )}
                                 </div>
@@ -1301,7 +1342,7 @@ export default function PersonnelsPage() {
                                 />
                                 <label
                                     htmlFor="edit-personnel-image"
-                                    className="inline-flex items-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-3 text-sm font-bold text-white hover:from-blue-600 hover:to-blue-700 transition-all shadow-lg shadow-blue-500/30"
+                                    className="inline-flex items-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 px-6 py-3 text-sm font-bold text-white hover:from-slate-900 hover:via-teal-950 hover:to-slate-900 transition-all shadow-lg shadow-slate-900/30"
                                 >
                                     <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>upload</span>
                                     Change Profile Image
@@ -1310,7 +1351,7 @@ export default function PersonnelsPage() {
                                     JPEG, PNG, GIF, WebP • Max: 10MB
                                 </p>
                                 {uploadingImage && (
-                                    <p className="text-xs text-blue-600 mt-2 flex items-center gap-1 font-semibold">
+                                    <p className="text-xs text-teal-700 mt-2 flex items-center gap-1 font-semibold">
                                         <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>progress_activity</span>
                                         Uploading...
                                     </p>
@@ -1325,7 +1366,7 @@ export default function PersonnelsPage() {
                                         type="text"
                                         value={selectedPersonnel.lastName || ""}
                                         onChange={(e) => handleEditChange("lastName", e.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                                 <div className="sm:col-span-1">
@@ -1335,7 +1376,7 @@ export default function PersonnelsPage() {
                                         type="text"
                                         value={selectedPersonnel.firstName || ""}
                                         onChange={(e) => handleEditChange("firstName", e.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                                 <div className="sm:col-span-1">
@@ -1345,7 +1386,7 @@ export default function PersonnelsPage() {
                                         value={selectedPersonnel.middleInitial || ""}
                                         onChange={(e) => handleEditChange("middleInitial", e.target.value)}
                                         maxLength={3}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                             </div>
@@ -1357,7 +1398,7 @@ export default function PersonnelsPage() {
                                         type="text"
                                         value={selectedPersonnel.rank || ""}
                                         onChange={(e) => handleEditChange("rank", e.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                                 <div>
@@ -1367,7 +1408,7 @@ export default function PersonnelsPage() {
                                         type="text"
                                         value={selectedPersonnel.position || ""}
                                         onChange={(e) => handleEditChange("position", e.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                             </div>
@@ -1378,7 +1419,7 @@ export default function PersonnelsPage() {
                                         type="text"
                                         value={selectedPersonnel.contactNo || ""}
                                         onChange={(e) => handleEditChange("contactNo", e.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                                 <div>
@@ -1387,7 +1428,7 @@ export default function PersonnelsPage() {
                                         type="email"
                                         value={selectedPersonnel.email || ""}
                                         onChange={(e) => handleEditChange("email", e.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                             </div>
@@ -1398,7 +1439,7 @@ export default function PersonnelsPage() {
                                         type="date"
                                         value={selectedPersonnel.dateOfBirth || ""}
                                         onChange={(e) => handleEditChange("dateOfBirth", e.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                     />
                                 </div>
                                 <div>
@@ -1417,7 +1458,7 @@ export default function PersonnelsPage() {
                                     type="text"
                                     value={selectedPersonnel.currentAddress || ""}
                                     onChange={(e) => handleEditChange("currentAddress", e.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                 />
                             </div>
                             <div>
@@ -1426,7 +1467,7 @@ export default function PersonnelsPage() {
                                     type="text"
                                     value={selectedPersonnel.permanentAddress || ""}
                                     onChange={(e) => handleEditChange("permanentAddress", e.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                                 />
                             </div>
                             <div className="flex gap-3 pt-4 border-t border-slate-100">
@@ -1439,8 +1480,11 @@ export default function PersonnelsPage() {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="flex-1 rounded-xl bg-emerald-500 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/30 hover:shadow-xl active:scale-95 transition-all"
+                                    className="flex items-center justify-center gap-2 flex-1 rounded-xl bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 py-3 text-sm font-bold text-white shadow-lg shadow-slate-900/30 hover:shadow-xl active:scale-95 transition-all"
                                 >
+                                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>
+                                        save
+                                    </span>
                                     Save Changes
                                 </button>
                             </div>
@@ -1521,8 +1565,11 @@ export default function PersonnelsPage() {
                                         setEditModalOpen(false);
                                         setDetailsModalOpen(true);
                                     }}
-                                    className="flex-1 rounded-lg bg-emerald-500 py-2.5 text-sm font-bold text-white hover:bg-emerald-600 transition-all"
+                                    className="flex items-center justify-center gap-2 flex-1 rounded-lg bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/30 hover:shadow-xl transition-all"
                                 >
+                                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>
+                                        save
+                                    </span>
                                     Save changes
                                 </button>
                                 <button

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -443,13 +444,19 @@ export default function VehiclePage() {
         {/* Logo */}
         <div className={`flex h-16 items-center border-b border-slate-700/50 px-3 ${sidebarOpen ? 'justify-between' : 'justify-center'}`}>
           <div className="flex items-center gap-3 min-w-0">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 text-white shadow-lg shadow-emerald-500/30 flex-shrink-0">
-              <span className="material-symbols-outlined" style={{ fontSize: "1.4rem" }}>local_shipping</span>
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white shadow-lg flex-shrink-0 overflow-hidden">
+              <Image
+                src="/logo.png"
+                alt="2nd JLSU Logo"
+                width={44}
+                height={44}
+                className="object-contain"
+              />
             </div>
             {sidebarOpen && (
               <div className="animate-fade-in overflow-hidden">
-                <p className="font-bold text-white tracking-wide">Log Truck</p>
-                <p className="text-xs text-slate-400">v2.0</p>
+                <p className="font-bold text-white tracking-wide text-lg">2nd JLSU</p>
+                <p className="text-xs text-slate-400">Log Truck System</p>
               </div>
             )}
           </div>
@@ -610,10 +617,21 @@ export default function VehiclePage() {
                   filteredVehicles.map((vehicle, index) => (
                     <div
                       key={vehicle.id}
-                      className="group relative bg-white rounded-2xl border border-slate-200 shadow-lg hover:shadow-2xl transition-all duration-300 cursor-pointer overflow-hidden animate-fade-in"
+                      className="group relative bg-gradient-to-br from-white via-slate-50 to-gray-50 rounded-3xl border-2 border-slate-200 shadow-xl shadow-slate-900/10 hover:shadow-2xl hover:shadow-slate-900/20 transition-all duration-500 cursor-pointer overflow-hidden animate-fade-in hover:-translate-y-2"
                       style={{ animationDelay: `${index * 0.05}s` }}
                       onClick={() => handleViewDetails(vehicle)}
                     >
+                      {/* Decorative gradient background on hover */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-teal-50/50 via-emerald-50/30 to-slate-50 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                      
+                      {/* Animated shimmer glow */}
+                      <div className="absolute inset-0 opacity-0 group-hover:opacity-20 transition-opacity duration-500 bg-gradient-to-r from-transparent via-teal-600/30 to-transparent blur-xl" />
+                      
+                      {/* Card top accent with shimmer effect - dark navy green */}
+                      <div className="relative h-3 w-full bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 overflow-hidden">
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
+                      </div>
+
                       {/* Vehicle Image */}
                       <div className="relative aspect-[4/3] bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden">
                         {vehicle.imageUrl ? (
@@ -624,7 +642,7 @@ export default function VehiclePage() {
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
-                            <span className="material-symbols-outlined text-slate-300" style={{ fontSize: "4rem" }}>
+                            <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "4rem" }}>
                               local_shipping
                             </span>
                           </div>
@@ -641,48 +659,58 @@ export default function VehiclePage() {
                       </div>
 
                       {/* Vehicle Info */}
-                      <div className="p-5 space-y-3">
+                      <div className="relative p-5 space-y-3">
                         {/* Codename & Plate */}
-                        <div>
-                          <h3 className="text-xl font-bold text-slate-900 mb-1 truncate group-hover:text-blue-600 transition-colors">
+                        <div className="text-center">
+                          <h3 className="text-xl font-black text-slate-900 mb-2 truncate group-hover:text-teal-900 transition-colors">
                             {vehicle.codename}
                           </h3>
-                          <p className="text-sm font-mono text-slate-500 italic truncate">
+                          <p className="text-sm font-mono text-slate-900 font-bold truncate bg-slate-100 rounded-lg px-3 py-1.5 inline-block border-2 border-slate-300">
                             {vehicle.plate}
                           </p>
                         </div>
 
                         {/* Personnel */}
-                        <div className="flex items-center gap-2 text-sm text-slate-600 border-t border-slate-100 pt-3">
-                          <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1.1rem" }}>
-                            person
-                          </span>
-                          <span className="truncate font-medium">{vehicle.personnelName}</span>
+                        <div className="flex items-center gap-3 text-sm text-slate-700 border-t-2 border-slate-200 pt-3 p-2 rounded-xl hover:bg-slate-100 transition-all duration-200">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 shadow-lg shadow-slate-900/30">
+                            <span className="material-symbols-outlined text-white" style={{ fontSize: "1.1rem" }}>
+                              person
+                            </span>
+                          </div>
+                          <span className="truncate font-bold text-slate-900">{vehicle.personnelName}</span>
                         </div>
 
                         {/* Vehicle Type */}
-                        <div className="flex items-center gap-2 text-sm text-slate-600">
-                          <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1.1rem" }}>
-                            directions_car
-                          </span>
-                          <span className="font-semibold">{vehicle.truckType}</span>
+                        <div className="flex items-center gap-3 text-sm text-slate-700 p-2 rounded-xl hover:bg-slate-100 transition-all duration-200">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 shadow-lg shadow-slate-900/30">
+                            <span className="material-symbols-outlined text-white" style={{ fontSize: "1.1rem" }}>
+                              local_shipping
+                            </span>
+                          </div>
+                          <span className="font-bold text-slate-900">{vehicle.truckType}</span>
                         </div>
 
                         {/* Capacity Info */}
-                        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
-                          <div className="bg-slate-50 rounded-lg p-2.5">
-                            <p className="text-xs text-slate-500 font-medium mb-0.5">Gas Tank</p>
-                            <p className="text-sm font-bold text-slate-900">{vehicle.gasTankCapacity} L</p>
+                        <div className="grid grid-cols-2 gap-3 pt-3 border-t-2 border-slate-200">
+                          <div className="bg-gradient-to-br from-slate-100 to-slate-50 rounded-xl p-3 shadow-md border-2 border-slate-200">
+                            <p className="text-xs text-slate-600 font-bold mb-1 uppercase tracking-wider">Gas Tank</p>
+                            <p className="text-base font-black text-slate-900">{vehicle.gasTankCapacity} L</p>
                           </div>
-                          <div className="bg-slate-50 rounded-lg p-2.5">
-                            <p className="text-xs text-slate-500 font-medium mb-0.5">Payload</p>
-                            <p className="text-sm font-bold text-slate-900">{vehicle.payloadCapacity} tons</p>
+                          <div className="bg-gradient-to-br from-slate-100 to-slate-50 rounded-xl p-3 shadow-md border-2 border-slate-200">
+                            <p className="text-xs text-slate-600 font-bold mb-1 uppercase tracking-wider">Payload</p>
+                            <p className="text-base font-black text-slate-900">{vehicle.payloadCapacity} tons</p>
                           </div>
                         </div>
                       </div>
 
-                      {/* Hover Overlay */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-blue-600/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                      {/* Hover indicator */}
+                      <div className="absolute bottom-5 right-5 opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-2 group-hover:translate-y-0">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900 text-white shadow-xl shadow-slate-900/60">
+                          <span className="material-symbols-outlined" style={{ fontSize: "1.4rem" }}>
+                            arrow_forward
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   ))
                 )}
@@ -765,9 +793,10 @@ export default function VehiclePage() {
             onClick={() => setModalOpen(false)}
           />
           <div className="relative w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl animate-fade-in">
-            <div className="sticky top-0 z-10 bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between rounded-t-2xl">
-              <h2 className="text-lg font-bold text-white">Add New Vehicle</h2>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-white">
+            <div className="sticky top-0 z-10 bg-gradient-to-r from-emerald-600 via-emerald-500 to-green-600 px-6 py-4 flex items-center justify-between rounded-t-2xl overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
+              <h2 className="text-lg font-bold text-white drop-shadow-lg relative z-10">Add New Vehicle</h2>
+              <button onClick={() => setModalOpen(false)} className="text-emerald-100 hover:text-white transition-colors relative z-10">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
@@ -784,14 +813,14 @@ export default function VehiclePage() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                 {/* LEFT SIDE - Vehicle Image */}
                 <div className="lg:col-span-1">
-                  <div className="sticky top-6 flex flex-col items-center border-2 border-blue-200 bg-gradient-to-br from-blue-50/50 to-sky-50/30 rounded-2xl p-6">
+                  <div className="sticky top-6 flex flex-col items-center border-2 border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-green-50/30 rounded-2xl p-6">
                     <label className="block text-sm font-bold text-slate-700 mb-4 uppercase tracking-wide">
                       Vehicle Image
                     </label>
                     {/* Image Preview */}
                     <div className="mb-4 w-full">
                       {imagePreview ? (
-                        <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
+                        <div className="relative w-full aspect-square rounded-2xl border-4 border-emerald-300 overflow-hidden shadow-lg">
                           <img
                             src={imagePreview}
                             alt="Preview"
@@ -809,8 +838,8 @@ export default function VehiclePage() {
                           </button>
                         </div>
                       ) : (
-                        <div className="w-full aspect-square rounded-2xl border-4 border-dashed border-blue-300 bg-white flex items-center justify-center">
-                          <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "5rem" }}>local_shipping</span>
+                        <div className="w-full aspect-square rounded-2xl border-4 border-dashed border-emerald-300 bg-white flex items-center justify-center">
+                          <span className="material-symbols-outlined text-emerald-400" style={{ fontSize: "5rem" }}>local_shipping</span>
                         </div>
                       )}
                     </div>
@@ -825,7 +854,7 @@ export default function VehiclePage() {
                     />
                     <label
                       htmlFor="vehicle-image"
-                      className="w-full inline-flex items-center justify-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-3 text-sm font-bold text-white hover:from-blue-600 hover:to-blue-700 transition-all shadow-lg shadow-blue-500/30"
+                      className="w-full inline-flex items-center justify-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-6 py-3 text-sm font-bold text-white hover:from-emerald-700 hover:to-green-700 transition-all shadow-lg shadow-emerald-500/30"
                     >
                       <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>upload</span>
                       Choose Image
@@ -834,7 +863,7 @@ export default function VehiclePage() {
                       JPEG, PNG, GIF, WebP<br />Max: 10MB
                     </p>
                     {uploadingImage && (
-                      <p className="text-xs text-blue-600 mt-3 flex items-center gap-1 font-semibold">
+                      <p className="text-xs text-emerald-600 mt-3 flex items-center gap-1 font-semibold">
                         <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>progress_activity</span>
                         Uploading...
                       </p>
@@ -853,7 +882,7 @@ export default function VehiclePage() {
                   value={form.codename}
                   onChange={(e) => setForm({ ...form, codename: e.target.value })}
                   placeholder="e.g. ALPHA-1"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                 />
               </div>
 
@@ -863,7 +892,7 @@ export default function VehiclePage() {
                   required
                   value={form.personnelId}
                   onChange={(e) => setForm({ ...form, personnelId: e.target.value })}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all bg-white"
                 >
                   <option value="">Select Officer</option>
                   {personnels.map(o => (
@@ -882,7 +911,7 @@ export default function VehiclePage() {
                   value={form.bodyNumber}
                   onChange={(e) => setForm({ ...form, bodyNumber: e.target.value })}
                   placeholder="e.g. BN12345"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                 />
               </div>
 
@@ -894,7 +923,7 @@ export default function VehiclePage() {
                   value={form.chassisNumber}
                   onChange={(e) => setForm({ ...form, chassisNumber: e.target.value })}
                   placeholder="e.g. CH123456789"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                 />
               </div>
 
@@ -906,7 +935,7 @@ export default function VehiclePage() {
                   value={form.engineNumber}
                   onChange={(e) => setForm({ ...form, engineNumber: e.target.value })}
                   placeholder="e.g. EN987654321"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                 />
               </div>
 
@@ -942,7 +971,7 @@ export default function VehiclePage() {
                     value={form.plate}
                     onChange={(e) => setForm({ ...form, plate: e.target.value })}
                     placeholder="TGD 1234"
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                   />
                 </div>
               </div>
@@ -953,7 +982,7 @@ export default function VehiclePage() {
                   <select
                     value={form.vehicleCondition}
                     onChange={(e) => setForm({ ...form, vehicleCondition: e.target.value, odometer: e.target.value === "New" ? 0 : form.odometer })}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all bg-white"
                   >
                     <option value="New">New</option>
                     <option value="2nd hand">2nd hand</option>
@@ -968,7 +997,7 @@ export default function VehiclePage() {
                       value={form.odometer || ""}
                       onChange={(e) => setForm({ ...form, odometer: parseInt(e.target.value) || 0 })}
                       placeholder="0"
-                      className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:bg-slate-50 disabled:text-slate-400"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all disabled:bg-slate-50 disabled:text-slate-400"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 uppercase">Km</span>
                   </div>
@@ -1092,7 +1121,7 @@ export default function VehiclePage() {
                       type="number"
                       value={form.gasTankCapacity || ""}
                       onChange={(e) => setForm({ ...form, gasTankCapacity: parseInt(e.target.value) || 0 })}
-                      className="w-full rounded-xl border border-slate-200 pl-4 pr-8 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                      className="w-full rounded-xl border border-slate-200 pl-4 pr-8 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">L</span>
                   </div>
@@ -1106,7 +1135,7 @@ export default function VehiclePage() {
                       step="0.01"
                       value={form.payloadCapacity || ""}
                       onChange={(e) => setForm({ ...form, payloadCapacity: parseFloat(e.target.value) || 0 })}
-                      className="w-full rounded-xl border border-slate-200 pl-4 pr-12 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                      className="w-full rounded-xl border border-slate-200 pl-4 pr-12 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 uppercase">tons</span>
                   </div>
@@ -1126,7 +1155,7 @@ export default function VehiclePage() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white shadow-lg shadow-blue-500/30 hover:shadow-xl active:scale-95 transition-all disabled:opacity-50"
+                  className="flex-1 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:from-emerald-700 hover:to-green-700 active:scale-95 transition-all disabled:opacity-50"
                 >
                   {submitting ? "Adding..." : "Add Vehicle"}
                 </button>
@@ -1144,16 +1173,17 @@ export default function VehiclePage() {
             onClick={() => setDetailsModalOpen(false)}
           />
           <div className="relative w-full max-w-6xl rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/20 border border-blue-500/30">
-                  <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "1.3rem" }}>local_shipping</span>
+            <div className="bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 px-6 py-4 flex items-center justify-between relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
+              <div className="flex items-center gap-3 relative z-10">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-slate-800 via-teal-900 to-slate-900">
+                  <span className="material-symbols-outlined text-white" style={{ fontSize: "1.3rem" }}>local_shipping</span>
                 </div>
-                <h2 className="text-lg font-bold text-white">Vehicle Details</h2>
+                <h2 className="text-lg font-bold text-white drop-shadow-lg">Vehicle Details</h2>
               </div>
               <button
                 onClick={() => setDetailsModalOpen(false)}
-                className="text-slate-400 hover:text-white transition-colors"
+                className="text-slate-300 hover:text-white transition-colors relative z-10"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>
@@ -1164,7 +1194,7 @@ export default function VehiclePage() {
                 <div className="lg:col-span-1">
                   <div className="sticky top-0">
                     {selectedVehicle.imageUrl ? (
-                      <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg bg-slate-50">
+                      <div className="relative w-full aspect-square rounded-2xl border-4 border-teal-300 overflow-hidden shadow-lg bg-slate-50">
                         <img
                           src={selectedVehicle.imageUrl}
                           alt={`${selectedVehicle.codename}`}
@@ -1291,7 +1321,7 @@ export default function VehiclePage() {
                   setDetailsModalOpen(false);
                   setEditModalOpen(true);
                 }}
-                className="rounded-lg bg-blue-600 py-2.5 px-6 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 hover:shadow-xl hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2"
+                className="rounded-lg bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 py-2.5 px-6 text-sm font-semibold text-white shadow-lg shadow-teal-900/30 hover:shadow-xl hover:shadow-teal-500/30 active:scale-95 transition-all flex items-center gap-2"
               >
                 <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>edit</span>
                 Edit
@@ -1307,11 +1337,12 @@ export default function VehiclePage() {
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
           />
           <div className="relative w-full max-w-6xl rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Edit Vehicle Details</h2>
+            <div className="bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 px-6 py-4 flex items-center justify-between relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
+              <h2 className="text-lg font-bold text-white drop-shadow-lg relative z-10">Edit Vehicle Details</h2>
               <button
                 onClick={() => setCancelConfirmationOpen(true)}
-                className="text-slate-400 hover:text-white transition-colors"
+                className="text-slate-300 hover:text-white transition-colors relative z-10"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>
@@ -1321,14 +1352,14 @@ export default function VehiclePage() {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                   {/* LEFT SIDE - Vehicle Image */}
                   <div className="lg:col-span-1">
-                    <div className="sticky top-0 flex flex-col items-center border-2 border-blue-200 bg-gradient-to-br from-blue-50/50 to-sky-50/30 rounded-2xl p-6">
+                    <div className="sticky top-0 flex flex-col items-center border-2 border-teal-200 bg-gradient-to-br from-slate-50 via-teal-50/30 to-slate-50 rounded-2xl p-6">
                       <label className="block text-sm font-bold text-slate-700 mb-4 uppercase tracking-wide">
                         Vehicle Image
                       </label>
                       {/* Image Preview */}
                       <div className="mb-4 w-full">
                         {imagePreview ? (
-                          <div className="relative w-full aspect-square rounded-2xl border-4 border-blue-300 overflow-hidden shadow-lg">
+                          <div className="relative w-full aspect-square rounded-2xl border-4 border-teal-300 overflow-hidden shadow-lg">
                             <img
                               src={imagePreview}
                               alt="Preview"
@@ -1349,8 +1380,8 @@ export default function VehiclePage() {
                             </button>
                           </div>
                         ) : (
-                          <div className="w-full aspect-square rounded-2xl border-4 border-dashed border-blue-300 bg-white flex items-center justify-center">
-                            <span className="material-symbols-outlined text-blue-400" style={{ fontSize: "5rem" }}>local_shipping</span>
+                          <div className="w-full aspect-square rounded-2xl border-4 border-dashed border-teal-300 bg-white flex items-center justify-center">
+                            <span className="material-symbols-outlined text-teal-400" style={{ fontSize: "5rem" }}>local_shipping</span>
                           </div>
                         )}
                       </div>
@@ -1365,7 +1396,7 @@ export default function VehiclePage() {
                       />
                       <label
                         htmlFor="edit-vehicle-image"
-                        className="w-full inline-flex items-center justify-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-3 text-sm font-bold text-white hover:from-blue-600 hover:to-blue-700 transition-all shadow-lg shadow-blue-500/30"
+                        className="w-full inline-flex items-center justify-center gap-2 cursor-pointer rounded-xl bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 px-6 py-3 text-sm font-bold text-white hover:from-slate-700 hover:via-teal-800 hover:to-slate-700 transition-all shadow-lg shadow-teal-900/30"
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>upload</span>
                         Change Image
@@ -1374,7 +1405,7 @@ export default function VehiclePage() {
                         JPEG, PNG, GIF, WebP<br />Max: 10MB
                       </p>
                       {uploadingImage && (
-                        <p className="text-xs text-blue-600 mt-3 flex items-center gap-1 font-semibold">
+                        <p className="text-xs text-teal-700 mt-3 flex items-center gap-1 font-semibold">
                           <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>progress_activity</span>
                           Uploading...
                         </p>
@@ -1392,7 +1423,7 @@ export default function VehiclePage() {
                           type="text"
                           value={selectedVehicle.codename || ""}
                           onChange={(e) => handleEditChange("codename", e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                         />
                       </div>
                       <div>
@@ -1408,7 +1439,7 @@ export default function VehiclePage() {
                             handleEditChange("truckType", val);
                             handleEditChange("payloadCapacity", payloadCapacity);
                           }}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all bg-white"
                         >
                           <option value="M923">M923</option>
                           <option value="KM450">KM450</option>
@@ -1422,7 +1453,7 @@ export default function VehiclePage() {
                       <select
                         value={selectedVehicle.personnelId || ""}
                         onChange={(e) => handleEditChange("personnelId", e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all bg-white"
                       >
                         <option value="">Select Personnel</option>
                         {personnels.map((o) => (
@@ -1441,7 +1472,7 @@ export default function VehiclePage() {
                           type="text"
                           value={selectedVehicle.bodyNumber || ""}
                           onChange={(e) => handleEditChange("bodyNumber", e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                         />
                       </div>
                       <div>
@@ -1451,7 +1482,7 @@ export default function VehiclePage() {
                           type="text"
                           value={selectedVehicle.chassisNumber || ""}
                           onChange={(e) => handleEditChange("chassisNumber", e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                         />
                       </div>
                     </div>
@@ -1463,7 +1494,7 @@ export default function VehiclePage() {
                         type="text"
                         value={selectedVehicle.engineNumber || ""}
                         onChange={(e) => handleEditChange("engineNumber", e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                       />
                     </div>
 
@@ -1475,7 +1506,7 @@ export default function VehiclePage() {
                           type="number"
                           value={selectedVehicle.gasTankCapacity || ""}
                           onChange={(e) => handleEditChange("gasTankCapacity", parseInt(e.target.value))}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                         />
                       </div>
                       <div>
@@ -1486,7 +1517,7 @@ export default function VehiclePage() {
                           step="0.01"
                           value={selectedVehicle.payloadCapacity || ""}
                           onChange={(e) => handleEditChange("payloadCapacity", parseFloat(e.target.value))}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all"
                         />
                       </div>
                     </div>
@@ -1504,7 +1535,7 @@ export default function VehiclePage() {
                               odometer: cond === "New" ? 0 : selectedVehicle.odometer
                             });
                           }}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all bg-white"
                         >
                           <option value="New">New</option>
                           <option value="2nd hand">2nd hand</option>
@@ -1517,7 +1548,7 @@ export default function VehiclePage() {
                           type="number"
                           value={selectedVehicle.odometer || 0}
                           onChange={(e) => handleEditChange("odometer", parseInt(e.target.value) || 0)}
-                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all disabled:bg-slate-50 disabled:text-slate-400"
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all disabled:bg-slate-50 disabled:text-slate-400"
                         />
                       </div>
                     </div>
