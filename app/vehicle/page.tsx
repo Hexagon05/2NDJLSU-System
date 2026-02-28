@@ -35,6 +35,12 @@ interface Vehicle {
   vehicleCondition: string;
   odometer: number;
   imageUrl?: string;
+  unserviceableReasons?: {
+    flatTires: boolean;
+    engineFailure: boolean;
+    others: boolean;
+    othersText?: string;
+  };
 }
 
 interface Officer {
@@ -71,6 +77,12 @@ export default function VehiclePage() {
     odometer: 0,
     imageUrl: "",
     status: "Serviceable",
+    unserviceableReasons: {
+      flatTires: false,
+      engineFailure: false,
+      others: false,
+      othersText: ""
+    }
   });
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [originalVehicle, setOriginalVehicle] = useState<Vehicle | null>(null);
@@ -257,6 +269,12 @@ export default function VehiclePage() {
         odometer: 0,
         imageUrl: "",
         status: "Serviceable",
+        unserviceableReasons: {
+          flatTires: false,
+          engineFailure: false,
+          others: false,
+          othersText: ""
+        }
       });
       setImageFile(null);
       setImagePreview("");
@@ -963,7 +981,19 @@ export default function VehiclePage() {
                   <input
                     type="checkbox"
                     checked={form.status === "Serviceable"}
-                    onChange={(e) => setForm({ ...form, status: e.target.checked ? "Serviceable" : "Unserviceable" })}
+                    onChange={(e) => {
+                      const newStatus = e.target.checked ? "Serviceable" : "Unserviceable";
+                      setForm({ 
+                        ...form, 
+                        status: newStatus,
+                        unserviceableReasons: newStatus === "Serviceable" ? {
+                          flatTires: false,
+                          engineFailure: false,
+                          others: false,
+                          othersText: ""
+                        } : form.unserviceableReasons
+                      });
+                    }}
                     className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
                   />
                   <div className="flex-1">
@@ -976,6 +1006,82 @@ export default function VehiclePage() {
                   </span>
                 </label>
               </div>
+
+              {/* Unserviceable Reasons - Show only when Unserviceable */}
+              {form.status === "Unserviceable" && (
+                <div className="rounded-xl border-2 border-rose-200 p-5 bg-rose-50/50 space-y-3 animate-fade-in">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="material-symbols-outlined text-rose-600" style={{ fontSize: "1.3rem" }}>error</span>
+                    <h4 className="text-sm font-bold text-rose-900 uppercase tracking-wide">Reason for Unserviceability</h4>
+                  </div>
+                  
+                  <label className="flex items-center gap-3 cursor-pointer hover:bg-rose-100/50 p-2 rounded-lg transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={form.unserviceableReasons.flatTires}
+                      onChange={(e) => setForm({
+                        ...form,
+                        unserviceableReasons: {
+                          ...form.unserviceableReasons,
+                          flatTires: e.target.checked
+                        }
+                      })}
+                      className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-2 focus:ring-rose-500/20 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium text-slate-900">Flat Tires</span>
+                  </label>
+
+                  <label className="flex items-center gap-3 cursor-pointer hover:bg-rose-100/50 p-2 rounded-lg transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={form.unserviceableReasons.engineFailure}
+                      onChange={(e) => setForm({
+                        ...form,
+                        unserviceableReasons: {
+                          ...form.unserviceableReasons,
+                          engineFailure: e.target.checked
+                        }
+                      })}
+                      className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-2 focus:ring-rose-500/20 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium text-slate-900">Engine Failure</span>
+                  </label>
+
+                  <label className="flex items-start gap-3 cursor-pointer hover:bg-rose-100/50 p-2 rounded-lg transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={form.unserviceableReasons.others}
+                      onChange={(e) => setForm({
+                        ...form,
+                        unserviceableReasons: {
+                          ...form.unserviceableReasons,
+                          others: e.target.checked,
+                          othersText: e.target.checked ? form.unserviceableReasons.othersText : ""
+                        }
+                      })}
+                      className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-2 focus:ring-rose-500/20 cursor-pointer mt-0.5"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-slate-900 block mb-2">Others</span>
+                      {form.unserviceableReasons.others && (
+                        <input
+                          type="text"
+                          value={form.unserviceableReasons.othersText || ""}
+                          onChange={(e) => setForm({
+                            ...form,
+                            unserviceableReasons: {
+                              ...form.unserviceableReasons,
+                              othersText: e.target.value
+                            }
+                          })}
+                          placeholder="Specify other reason..."
+                          className="w-full rounded-lg border border-rose-200 px-3 py-2 text-sm focus:border-rose-400 focus:ring-2 focus:ring-rose-500/20 outline-none transition-all bg-white"
+                        />
+                      )}
+                    </div>
+                  </label>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1114,6 +1220,42 @@ export default function VehiclePage() {
                     {selectedVehicle.status || "Serviceable"}
                   </span>
                 </div>
+                
+                {/* Show Unserviceable Reasons if vehicle is unserviceable */}
+                {selectedVehicle.status === "Unserviceable" && selectedVehicle.unserviceableReasons && (
+                  <div className="col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Unserviceability Reasons</label>
+                    <div className="bg-rose-50 border border-rose-200 rounded-lg p-4 space-y-2">
+                      {selectedVehicle.unserviceableReasons.flatTires && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="material-symbols-outlined text-rose-600" style={{ fontSize: "1rem" }}>check_circle</span>
+                          <span className="text-slate-900 font-medium">Flat Tires</span>
+                        </div>
+                      )}
+                      {selectedVehicle.unserviceableReasons.engineFailure && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="material-symbols-outlined text-rose-600" style={{ fontSize: "1rem" }}>check_circle</span>
+                          <span className="text-slate-900 font-medium">Engine Failure</span>
+                        </div>
+                      )}
+                      {selectedVehicle.unserviceableReasons.others && (
+                        <div className="flex items-start gap-2 text-sm">
+                          <span className="material-symbols-outlined text-rose-600" style={{ fontSize: "1rem" }}>check_circle</span>
+                          <div>
+                            <span className="text-slate-900 font-medium">Others: </span>
+                            <span className="text-slate-700">{selectedVehicle.unserviceableReasons.othersText || "Not specified"}</span>
+                          </div>
+                        </div>
+                      )}
+                      {!selectedVehicle.unserviceableReasons.flatTires && 
+                       !selectedVehicle.unserviceableReasons.engineFailure && 
+                       !selectedVehicle.unserviceableReasons.others && (
+                        <p className="text-sm text-slate-500 italic">No specific reasons provided</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
                 <div className="col-span-2 grid grid-cols-2 gap-6">
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Gas Tank Capacity</label>
@@ -1386,7 +1528,25 @@ export default function VehiclePage() {
                         <input
                           type="checkbox"
                           checked={selectedVehicle.status === "Serviceable"}
-                          onChange={(e) => handleEditChange("status", e.target.checked ? "Serviceable" : "Unserviceable")}
+                          onChange={(e) => {
+                            const newStatus = e.target.checked ? "Serviceable" : "Unserviceable";
+                            handleEditChange("status", newStatus);
+                            if (newStatus === "Serviceable") {
+                              handleEditChange("unserviceableReasons", {
+                                flatTires: false,
+                                engineFailure: false,
+                                others: false,
+                                othersText: ""
+                              });
+                            } else if (!selectedVehicle.unserviceableReasons) {
+                              handleEditChange("unserviceableReasons", {
+                                flatTires: false,
+                                engineFailure: false,
+                                others: false,
+                                othersText: ""
+                              });
+                            }
+                          }}
                           className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
                         />
                         <div className="flex-1">
@@ -1399,6 +1559,70 @@ export default function VehiclePage() {
                         </span>
                       </label>
                     </div>
+
+                    {/* Unserviceable Reasons - Show only when Unserviceable */}
+                    {selectedVehicle.status === "Unserviceable" && (
+                      <div className="rounded-xl border-2 border-rose-200 p-5 bg-rose-50/50 space-y-3 animate-fade-in">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="material-symbols-outlined text-rose-600" style={{ fontSize: "1.3rem" }}>error</span>
+                          <h4 className="text-sm font-bold text-rose-900 uppercase tracking-wide">Reason for Unserviceability</h4>
+                        </div>
+                        
+                        <label className="flex items-center gap-3 cursor-pointer hover:bg-rose-100/50 p-2 rounded-lg transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={selectedVehicle.unserviceableReasons?.flatTires || false}
+                            onChange={(e) => handleEditChange("unserviceableReasons", {
+                              ...(selectedVehicle.unserviceableReasons || { flatTires: false, engineFailure: false, others: false, othersText: "" }),
+                              flatTires: e.target.checked
+                            })}
+                            className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-2 focus:ring-rose-500/20 cursor-pointer"
+                          />
+                          <span className="text-sm font-medium text-slate-900">Flat Tires</span>
+                        </label>
+
+                        <label className="flex items-center gap-3 cursor-pointer hover:bg-rose-100/50 p-2 rounded-lg transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={selectedVehicle.unserviceableReasons?.engineFailure || false}
+                            onChange={(e) => handleEditChange("unserviceableReasons", {
+                              ...(selectedVehicle.unserviceableReasons || { flatTires: false, engineFailure: false, others: false, othersText: "" }),
+                              engineFailure: e.target.checked
+                            })}
+                            className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-2 focus:ring-rose-500/20 cursor-pointer"
+                          />
+                          <span className="text-sm font-medium text-slate-900">Engine Failure</span>
+                        </label>
+
+                        <label className="flex items-start gap-3 cursor-pointer hover:bg-rose-100/50 p-2 rounded-lg transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={selectedVehicle.unserviceableReasons?.others || false}
+                            onChange={(e) => handleEditChange("unserviceableReasons", {
+                              ...(selectedVehicle.unserviceableReasons || { flatTires: false, engineFailure: false, others: false, othersText: "" }),
+                              others: e.target.checked,
+                              othersText: e.target.checked ? (selectedVehicle.unserviceableReasons?.othersText || "") : ""
+                            })}
+                            className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-2 focus:ring-rose-500/20 cursor-pointer mt-0.5"
+                          />
+                          <div className="flex-1">
+                            <span className="text-sm font-medium text-slate-900 block mb-2">Others</span>
+                            {selectedVehicle.unserviceableReasons?.others && (
+                              <input
+                                type="text"
+                                value={selectedVehicle.unserviceableReasons?.othersText || ""}
+                                onChange={(e) => handleEditChange("unserviceableReasons", {
+                                  ...(selectedVehicle.unserviceableReasons || { flatTires: false, engineFailure: false, others: false, othersText: "" }),
+                                  othersText: e.target.value
+                                })}
+                                placeholder="Specify other reason..."
+                                className="w-full rounded-lg border border-rose-200 px-3 py-2 text-sm focus:border-rose-400 focus:ring-2 focus:ring-rose-500/20 outline-none transition-all bg-white"
+                              />
+                            )}
+                          </div>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

@@ -321,7 +321,10 @@ export default function PersonnelsPage() {
                 ...dataToUpdate,
                 imageUrl,
             });
-            setOriginalPersonnel({ ...selectedPersonnel, imageUrl });
+            // Update both selectedPersonnel and originalPersonnel with the new imageUrl
+            const updatedPersonnel = { ...selectedPersonnel, imageUrl };
+            setSelectedPersonnel(updatedPersonnel);
+            setOriginalPersonnel(updatedPersonnel);
             setSuccessMsg("Personnel updated successfully!");
             setTimeout(() => setSuccessMsg(""), 3500);
             await fetchOfficers();
@@ -329,6 +332,7 @@ export default function PersonnelsPage() {
             setEditModalOpen(false);
             setDetailsModalOpen(true);
             setImageFile(null);
+            setImagePreview("");
         } catch (error) {
             console.error("Error saving personnel details:", error);
             setErrorMsg("Failed to save personnel. Please try again.");

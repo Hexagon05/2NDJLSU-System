@@ -11,6 +11,7 @@ import {
   onSnapshot,
   Timestamp,
 } from "firebase/firestore";
+import * as XLSX from "xlsx";
 
 interface HistoryRecord {
   id: string;
@@ -116,7 +117,48 @@ export default function HistoryPage() {
   };
 
   const handleExportExcel = () => {
-    alert("Exporting to Excel...");
+    try {
+      // Prepare data for export
+      const exportData = filteredData.map((record, index) => ({
+        "No.": index + 1,
+        "Dispatch ID": record.dispatchId,
+        "Vehicle": record.vehicle,
+        "Event": record.event,
+        "Location": record.location,
+        "Officer": record.officer,
+        "Status": record.status,
+        "Timestamp": record.timestamp,
+      }));
+
+      // Create a new workbook and worksheet
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "History Records");
+
+      // Set column widths for better readability
+      const columnWidths = [
+        { wch: 5 },  // No.
+        { wch: 15 }, // Dispatch ID
+        { wch: 20 }, // Vehicle
+        { wch: 25 }, // Event
+        { wch: 30 }, // Location
+        { wch: 30 }, // Officer
+        { wch: 12 }, // Status
+        { wch: 20 }, // Timestamp
+      ];
+      worksheet['!cols'] = columnWidths;
+
+      // Generate filename with current date
+      const date = new Date();
+      const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+      const filename = `History_Records_${dateStr}.xlsx`;
+
+      // Write and download the file
+      XLSX.writeFile(workbook, filename);
+    } catch (error) {
+      console.error("Error exporting to Excel:", error);
+      alert("Failed to export to Excel. Please try again.");
+    }
   };
 
   const filteredData = historyData.filter(
