@@ -1,47 +1,69 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useAuth } from "@/lib/auth-context";
+import { db } from "@/lib/firebase";
+import {
+  collection,
+  addDoc,
+  query,
+  orderBy,
+  onSnapshot,
+  Timestamp,
+} from "firebase/firestore";
 
 interface Message {
   id: string;
-  sender: "personnel" | "admin";
+  senderId: string;
+  senderName: string;
   text: string;
-  timestamp: Date;
+  timestamp: Timestamp | null;
+  imageUrl?: string;
+  isAdmin: boolean;
 }
 
 interface TICEmergencyModalProps {
   onClose: () => void;
   truckCodename?: string;
   personnelName?: string;
+  emergencyReportId?: string;
+  location?: { lat: number; lng: number; label?: string };
+  description?: string;
+  imageUrl?: string;
 }
 
 export default function TICEmergencyModal({
   onClose,
-  truckCodename = "TRUCK-07",
-  personnelName = "SGT. Rodriguez",
+  truckCodename = "TIC",
+  personnelName = "Field Personnel",
+  emergencyReportId,
+  location,
+  description,
+  imageUrl,
 }: TICEmergencyModalProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      sender: "personnel",
-      text: "TIC! TIC! Under fire! Ambushed on route. Requesting immediate QRF support!",
-      timestamp: new Date(Date.now() - 300000),
-    },
-    {
-      id: "2",
-      sender: "admin",
-      text: "Copy that. What's your exact location and status? How many hostiles?",
-      timestamp: new Date(Date.now() - 240000),
-    },
-    {
-      id: "3",
-      sender: "personnel",
-      text: "Coordinates: 9.8236°N, 118.7253°E. Currently in cover. 3 personnel, no casualties. Estimated 5-7 hostiles, small arms fire!",
-      timestamp: new Date(Date.now() - 180000),
-    },
-  ]);
+  const { user } = useAuth();
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
+  const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Real-time listener for messages
+  useEffect(() => {
+    if (!emergencyReportId) return;
+
+    const messagesRef = collection(db, "EmergencyReports", emergencyReportId, "messages");
+    const q = query(messagesRef, orderBy("timestamp", "asc"));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const loadedMessages = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Message, "id">),
+      }));
+      setMessages(loadedMessages);
+    });
+
+    return () => unsubscribe();
+  }, [emergencyReportId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -51,23 +73,34 @@ export default function TICEmergencyModal({
     scrollToBottom();
   }, [messages]);
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim()) return;
+    if (!inputMessage.trim() || !emergencyReportId || !user) return;
 
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      sender: "admin",
-      text: inputMessage,
-      timestamp: new Date(),
-    };
+    setSending(true);
+    try {
+      const messagesRef = collection(db, "EmergencyReports", emergencyReportId, "messages");
+      await addDoc(messagesRef, {
+        senderId: user.uid,
+        senderName: user.displayName || user.email || "Admin",
+        text: inputMessage.trim(),
+        timestamp: Timestamp.now(),
+        imageUrl: "",
+        isAdmin: true,
+      });
 
-    setMessages([...messages, newMessage]);
-    setInputMessage("");
+      setInputMessage("");
+    } catch (error) {
+      console.error("Error sending message:", error);
+      alert("Failed to send message. Please try again.");
+    } finally {
+      setSending(false);
+    }
   };
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString("en-US", {
+  const formatTime = (timestamp: Timestamp | null) => {
+    if (!timestamp) return "";
+    return timestamp.toDate().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -134,33 +167,50 @@ export default function TICEmergencyModal({
 
         {/* Chat Messages Area */}
         <div className="h-96 overflow-y-auto bg-gradient-to-b from-slate-50 to-slate-100 p-6 space-y-4 custom-scrollbar">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.sender === "admin" ? "justify-end" : "justify-start"} animate-slide-up`}
-            >
-              <div
-                className={`max-w-[75%] rounded-2xl px-4 py-3 shadow-md ${
-                  msg.sender === "admin"
-                    ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-                    : "bg-white text-slate-900 border-2 border-red-200"
-                }`}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="material-symbols-outlined text-sm">
-                    {msg.sender === "admin" ? "admin_panel_settings" : "shield_person"}
-                  </span>
-                  <span className="text-xs font-bold opacity-90">
-                    {msg.sender === "admin" ? "Command Center" : personnelName}
-                  </span>
-                </div>
-                <p className="text-sm font-medium leading-relaxed">{msg.text}</p>
-                <p className={`text-xs font-semibold mt-2 ${msg.sender === "admin" ? "text-blue-100" : "text-slate-500"}`}>
-                  {formatTime(msg.timestamp)}
-                </p>
+          {messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <span className="material-symbols-outlined text-slate-300 text-5xl mb-3">chat</span>
+                <p className="text-slate-400 font-medium">No messages yet</p>
+                <p className="text-xs text-slate-400 mt-1">Start the conversation below</p>
               </div>
             </div>
-          ))}
+          ) : (
+            messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${msg.isAdmin ? "justify-end" : "justify-start"} animate-slide-up`}
+              >
+                <div
+                  className={`max-w-[75%] rounded-2xl px-4 py-3 shadow-md ${
+                    msg.isAdmin
+                      ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
+                      : "bg-white text-slate-900 border-2 border-red-200"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="material-symbols-outlined text-sm">
+                      {msg.isAdmin ? "admin_panel_settings" : "shield_person"}
+                    </span>
+                    <span className="text-xs font-bold opacity-90">
+                      {msg.senderName}
+                    </span>
+                  </div>
+                  {msg.imageUrl && (
+                    <img 
+                      src={msg.imageUrl} 
+                      alt="Attachment" 
+                      className="w-full rounded-lg mb-2 max-h-48 object-cover"
+                    />
+                  )}
+                  <p className="text-sm font-medium leading-relaxed">{msg.text}</p>
+                  <p className={`text-xs font-semibold mt-2 ${msg.isAdmin ? "text-blue-100" : "text-slate-500"}`}>
+                    {formatTime(msg.timestamp)}
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -181,11 +231,20 @@ export default function TICEmergencyModal({
             </div>
             <button
               type="submit"
-              disabled={!inputMessage.trim()}
+              disabled={!inputMessage.trim() || sending}
               className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/30 hover:shadow-xl hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-blue-600 disabled:hover:to-blue-700 transition-all duration-200 hover:scale-105 active:scale-95"
             >
-              <span className="material-symbols-outlined">send</span>
-              Send
+              {sending ? (
+                <>
+                  <span className="material-symbols-outlined animate-spin">progress_activity</span>
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined">send</span>
+                  Send
+                </>
+              )}
             </button>
           </div>
           <div className="flex items-center gap-2 mt-3 px-2">

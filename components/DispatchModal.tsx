@@ -661,7 +661,14 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
             onSuccess();
             onClose();
         } catch (err: any) {
-            setError(err.message || "Failed to save dispatch. Try again.");
+            const errorMessage = err.message || "Failed to save dispatch.";
+            
+            // Check for permission errors
+            if (errorMessage.includes("PERMISSION") || errorMessage.includes("permission")) {
+                setError("⚠️ Permission denied. You need admin access. Please visit the Admin Setup page to configure your account.");
+            } else {
+                setError(errorMessage);
+            }
         } finally {
             setSubmitting(false);
         }
@@ -1284,11 +1291,22 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 via-transparent to-blue-500/5"></div>
                     <div className="relative z-10">
                         {error && (
-                            <div className="flex items-center gap-3 text-rose-600 bg-rose-50 px-5 py-3 rounded-xl border-2 border-rose-200 shadow-lg animate-shake">
-                                <div className="h-10 w-10 rounded-xl bg-rose-100 flex items-center justify-center">
-                                    <span className="material-symbols-outlined" style={{ fontSize: "1.3rem" }}>error</span>
+                            <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-3 text-rose-600 bg-rose-50 px-5 py-3 rounded-xl border-2 border-rose-200 shadow-lg animate-shake">
+                                    <div className="h-10 w-10 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
+                                        <span className="material-symbols-outlined" style={{ fontSize: "1.3rem" }}>error</span>
+                                    </div>
+                                    <p className="text-sm font-bold tracking-tight">{error}</p>
                                 </div>
-                                <p className="text-sm font-bold uppercase tracking-tight">{error}</p>
+                                {(error.includes("PERMISSION") || error.includes("permission")) && (
+                                    <a
+                                        href="/setup-admin"
+                                        className="flex items-center justify-center gap-2 text-xs font-bold text-blue-600 bg-blue-50 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-100 transition-colors"
+                                    >
+                                        <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>settings</span>
+                                        Go to Admin Setup
+                                    </a>
+                                )}
                             </div>
                         )}
                     </div>

@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- Helper Functions ---
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is a web admin (from "users" collection)
+    function isWebAdmin() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Check if user is field personnel (from "personnelAccount" collection)
+    function isFieldPersonnel() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/personnelAccount/$(request.auth.uid));
+    }
+
+    // --- Users Collection (Web Admins Only) ---
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin() && request.auth.uid == userId;
+    }
+
+    // --- Personnel Account Collection (Field Personnel - Mobile App) ---
+    match /personnelAccount/{userId} {
+      allow read: if isAuthenticated();
+      // Web admins can manage all personnel, personnel can only update their own profile
+      allow create, delete: if isWebAdmin();
+      allow update: if isWebAdmin() || (isFieldPersonnel() && request.auth.uid == userId);
+    }
+
+    // --- Vehicles & History (Web Admin Only) ---
+    match /vehicles/{vehicleId} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+    
+    match /dispatch_history/{historyId} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+
+    // --- Dispatches & Chat Logic ---
+    match /dispatches/{dispatchId} {
+      allow read: if isAuthenticated();
+      // Only web admins can create and delete dispatches
+      allow create, delete: if isWebAdmin();
+      // Both web admins and field personnel can update (for status changes, location updates)
+      allow update: if isAuthenticated(); 
+
+      // Support Chat logic used by both web and mobile
+      match /messages/{messageId} {
+        allow read: if isAuthenticated();
+        // Anyone authenticated can send messages, validates sender ID
+        allow create: if isAuthenticated() 
+                      && request.resource.data.senderId == request.auth.uid; 
+        allow update, delete: if false; // Audit protection
+      }
+    }
+
+    // --- Emergency Reports (Field Personnel Can Create) ---
+    match /EmergencyReports/{reportId} {
+      allow read: if isAuthenticated();
+      // Field personnel AND web admins can create emergency reports
+      allow create: if isAuthenticated(); 
+      // Only web admins can update/delete emergency reports
+      allow update, delete: if isWebAdmin();
+
+      // Support Chat logic for emergency reports (web ↔ mobile communication)
+      match /messages/{messageId} {
+        allow read: if isAuthenticated();
+        // Anyone authenticated can send messages, validates sender ID
+        allow create: if isAuthenticated() 
+                      && request.resource.data.senderId == request.auth.uid; 
+        allow update, delete: if false; // Audit protection
+      }
+    }
+
+    // --- Metadata (For Dispatch ID Counter - Web Admin Only) ---
+    match /meta/{document} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+
+    // --- Default Deny ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

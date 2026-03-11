@@ -7,7 +7,6 @@ import Image from "next/image";
 import { OpenStreetMap } from "@/components/OpenStreetMap";
 import DispatchModal from "@/components/DispatchModal";
 import DispatchDetailModal from "@/components/DispatchDetailModal";
-import TICEmergencyModal from "@/components/TICEmergencyModal";
 import {
   collection,
   query,
@@ -74,7 +73,6 @@ export default function Dashboard() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showDispatchModal, setShowDispatchModal] = useState(false);
-  const [showTICModal, setShowTICModal] = useState(false);
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [selectedDispatch, setSelectedDispatch] = useState<Dispatch | null>(null);
   const [dispatchRefresh, setDispatchRefresh] = useState(0);
@@ -312,15 +310,6 @@ export default function Dashboard() {
         />
       )}
 
-      {/* TIC Emergency Modal */}
-      {showTICModal && (
-        <TICEmergencyModal
-          onClose={() => setShowTICModal(false)}
-          truckCodename="TRUCK-07"
-          personnelName="SGT. Rodriguez"
-        />
-      )}
-
       {/* Sidebar */}
       <div
         className={`${sidebarOpen ? "w-64" : "w-20"
@@ -404,15 +393,6 @@ export default function Dashboard() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
             </div>
             <div className="flex items-center gap-3">
-              {/* ── TIC Sample Button ── */}
-              <button
-                onClick={() => setShowTICModal(true)}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/40 hover:shadow-xl hover:from-rose-500 hover:to-red-600 hover:scale-[1.03] active:scale-95 transition-all duration-200 animate-pulse-subtle"
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>emergency</span>
-                TIC Sample
-              </button>
-
               {/* ── Create Dispatch Button ── */}
               <button
                 onClick={() => setShowDispatchModal(true)}

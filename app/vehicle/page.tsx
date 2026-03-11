@@ -369,9 +369,16 @@ export default function VehiclePage() {
       setImagePreviews({ front: "", back: "", left: "", right: "" });
       await fetchVehicles();
       setTimeout(() => setSuccessMsg(""), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error adding vehicle:", err);
-      setErrorMsg("Failed to add vehicle. Please try again.");
+      const errorMessage = err.message || "";
+      
+      // Check for permission errors
+      if (errorMessage.includes("PERMISSION") || errorMessage.includes("permission") || errorMessage.includes("Missing or insufficient permissions")) {
+        setErrorMsg("⚠️ Permission denied. You need web admin access. Please visit /setup-admin to configure your account.");
+      } else {
+        setErrorMsg(`Failed to add vehicle: ${errorMessage}`);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -654,11 +661,22 @@ export default function VehiclePage() {
 
             {/* Error Banner */}
             {errorMsg && (
-              <div className="flex items-center gap-3 rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-rose-800 animate-fade-in">
-                <span className="material-symbols-outlined text-rose-500" style={{ fontSize: "1.25rem" }}>
-                  error
-                </span>
-                <span className="text-sm font-medium">{errorMsg}</span>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-rose-800 animate-fade-in">
+                  <span className="material-symbols-outlined text-rose-500" style={{ fontSize: "1.25rem" }}>
+                    error
+                  </span>
+                  <span className="text-sm font-medium">{errorMsg}</span>
+                </div>
+                {(errorMsg.includes("PERMISSION") || errorMsg.includes("permission") || errorMsg.includes("Permission denied")) && (
+                  <a
+                    href="/setup-admin"
+                    className="flex items-center justify-center gap-2 text-xs font-bold text-blue-600 bg-blue-50 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-100 transition-colors"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>settings</span>
+                    Go to Admin Setup
+                  </a>
+                )}
               </div>
             )}
 
