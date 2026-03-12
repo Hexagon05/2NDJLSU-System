@@ -301,23 +301,10 @@ export default function EmergencyAlerts() {
                 <p className="text-xs text-slate-400">Log Truck System</p>
               </div>
             )}
-            {stats.resolvedEmergencies > 0 && (
-              <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-6 shadow-xl shadow-green-500/30 text-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-white/70">Resolved Emergencies</p>
-                    <p className="mt-2 text-4xl font-bold">{stats.resolvedEmergencies}</p>
-                  </div>
-                  <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-sm">
-                    <span className="material-symbols-outlined text-white/80" style={{ fontSize: "2rem" }}>task_alt</span>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
           {sidebarOpen && (
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => setSidebarOpen((prev: boolean) => !prev)}
               className="rounded-lg p-1.5 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white flex-shrink-0"
             >
               <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu_open</span>
@@ -326,7 +313,7 @@ export default function EmergencyAlerts() {
         </div>
         {!sidebarOpen && (
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
+            onClick={() => setSidebarOpen((prev: boolean) => !prev)}
             className="flex items-center justify-center w-full py-2 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white border-b border-slate-700/50"
           >
             <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu</span>
@@ -429,7 +416,7 @@ export default function EmergencyAlerts() {
           )}
           
           {/* Stats Grid */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div className="bg-gradient-to-br from-red-600 to-rose-700 rounded-2xl p-6 shadow-xl shadow-red-500/30 text-white">
               <div className="flex items-center justify-between">
                 <div>
@@ -460,6 +447,17 @@ export default function EmergencyAlerts() {
                 </div>
                 <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-sm">
                   <span className="material-symbols-outlined text-white/80" style={{ fontSize: "2rem" }}>group</span>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-6 shadow-xl shadow-green-500/30 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-white/70">Resolved Emergencies</p>
+                  <p className="mt-2 text-4xl font-bold">{stats.resolvedEmergencies}</p>
+                </div>
+                <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-sm">
+                  <span className="material-symbols-outlined text-white/80" style={{ fontSize: "2rem" }}>task_alt</span>
                 </div>
               </div>
             </div>
@@ -623,6 +621,109 @@ export default function EmergencyAlerts() {
               </table>
             </div>
           </div>
+
+          {/* Resolved Emergency Reports Table */}
+          {stats.resolvedEmergencies > 0 && (
+            <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-green-50 to-emerald-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-green-600" style={{ fontSize: "1.5rem" }}>task_alt</span>
+                    <h2 className="text-lg font-bold text-slate-900">Resolved Emergencies</h2>
+                  </div>
+                  <div className="text-xs text-slate-500 font-medium">
+                    {stats.resolvedEmergencies} {stats.resolvedEmergencies === 1 ? 'report' : 'reports'}
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gradient-to-r from-slate-50 to-slate-100 border-b-2 border-slate-200">
+                    <tr>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Report ID</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Personnel</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Type</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Description</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Location</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Time</th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {emergencyReports.filter(r => r.status === 'resolved').map((report, index) => (
+                      <tr 
+                        key={report.id || `resolved-report-${index}`} 
+                        className="hover:bg-green-50/50 transition-colors"
+                      >
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col">
+                            <span className="font-mono text-xs font-bold text-slate-500">
+                              #{report.id ? report.id.slice(-6).toUpperCase() : 'N/A'}
+                            </span>
+                            <span className="text-xs text-slate-400 mt-1">
+                              {formatTimestamp(report.timestamp)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-blue-600" style={{ fontSize: "1.25rem" }}>
+                              person
+                            </span>
+                            <span className="text-sm font-semibold text-slate-900">{report.senderName || report.reportedBy || "Unknown"}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-rose-100 text-rose-700 border-rose-300">
+                            {report.type || "EMERGENCY"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-green-100 text-green-700 border-green-300">
+                            <span className="mr-1.5 h-2 w-2 rounded-full bg-green-500"></span>
+                            RESOLVED
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="max-w-xs">
+                            <span className="text-xs text-slate-600 line-clamp-2">{report.description || "No description provided"}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-start gap-1.5 max-w-xs">
+                            <span className="material-symbols-outlined text-green-500 flex-shrink-0" style={{ fontSize: "1rem" }}>
+                              location_on
+                            </span>
+                            <div className="flex flex-col">
+                              <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
+                              <span className="text-xs text-slate-400 mt-0.5">
+                                {report.location?.lat.toFixed(4)}°, {report.location?.lng.toFixed(4)}°
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs font-medium text-slate-700">
+                            {getTimeElapsed(report.timestamp)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => handleReportClick(report)}
+                            className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100 transition-colors border border-green-200 hover:border-green-300"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>visibility</span>
+                            View Details
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 

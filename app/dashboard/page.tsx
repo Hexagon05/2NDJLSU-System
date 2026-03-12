@@ -5,6 +5,9 @@ import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { OpenStreetMap } from "@/components/OpenStreetMap";
+import GoogleStyledMap from "@/components/GoogleStyledMap";
+import dynamic from "next/dynamic";
+const LeafletRealtimeMap = dynamic(() => import("@/components/LeafletRealtimeMap"), { ssr: false });
 import DispatchModal from "@/components/DispatchModal";
 import DispatchDetailModal from "@/components/DispatchDetailModal";
 import {
@@ -108,20 +111,23 @@ export default function Dashboard() {
     }
   };
 
-  // Fetch vehicles from Firebase
+  // Realtime vehicles listener
   useEffect(() => {
-    const fetchVehicles = async () => {
-      try {
-        const q = query(collection(db, "vehicles"), orderBy("dateAdded", "asc"));
-        const snap = await getDocs(q);
+    if (!user) return;
+    const q = query(collection(db, "vehicles"), orderBy("dateAdded", "asc"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
         const vehiclesData = snap.docs.map((doc, index) => {
-          const data = doc.data();
-          // Assign coordinates to vehicles based on their order
-          // If vehicle is not serviceable, use current location (9.748257, 118.771556)
-          const coords = data.status === "Serviceable" && index < vehicleCoordinates.length
-            ? vehicleCoordinates[index]
-            : { lat: 9.748257, lng: 118.771556 };
-          
+          const data: any = doc.data();
+          // Prefer explicit lat/lng from Firestore if present; otherwise fall back to predefined coords
+          const hasCoords = typeof data.lat === "number" && typeof data.lng === "number";
+          const coords = hasCoords
+            ? { lat: data.lat, lng: data.lng }
+            : (data.status === "Serviceable" && index < vehicleCoordinates.length
+                ? vehicleCoordinates[index]
+                : { lat: 9.748257, lng: 118.771556 });
+
           return {
             id: doc.id,
             codename: data.codename,
@@ -131,17 +137,14 @@ export default function Dashboard() {
             personnelName: data.personnelName,
             lat: coords.lat,
             lng: coords.lng,
-          };
-        }) as Vehicle[];
+          } as Vehicle;
+        });
         setVehicles(vehiclesData);
-      } catch (error) {
-        console.error("Error fetching vehicles:", error);
-      }
-    };
+      },
+      (err) => console.error("vehicles onSnapshot error:", err)
+    );
 
-    if (user) {
-      fetchVehicles();
-    }
+    return () => unsub();
   }, [user]);
 
   // Live dispatches listener
@@ -292,6 +295,17 @@ export default function Dashboard() {
     };
   });
 
+  // If BRAVO-12 exists, pin all vehicles to BRAVO-12's coordinates (debug/testing mode)
+  const bravo = vehicles.find((v) => v.codename === "BRAVO-12");
+  const vehiclesForMap = bravo
+    ? vehicles.map((v) => ({
+        id: v.id!,
+        lat: bravo.lat ?? mapCenter.lat,
+        lng: bravo.lng ?? mapCenter.lng,
+        title: v.codename,
+      }))
+    : vehicles.map((v) => ({ id: v.id!, lat: v.lat ?? mapCenter.lat, lng: v.lng ?? mapCenter.lng, title: v.codename }));
+
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
       {/* Dispatch Modal */}
@@ -307,6 +321,7 @@ export default function Dashboard() {
         <DispatchDetailModal
           dispatch={selectedDispatch}
           onClose={() => setSelectedDispatch(null)}
+          onSuccess={() => setDispatchRefresh((n) => n + 1)}
         />
       )}
 
@@ -336,7 +351,7 @@ export default function Dashboard() {
           </div>
           {sidebarOpen && (
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => setSidebarOpen((prev: boolean) => !prev)}
               className="rounded-lg p-1.5 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white flex-shrink-0"
             >
               <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu_open</span>
@@ -345,7 +360,7 @@ export default function Dashboard() {
         </div>
         {!sidebarOpen && (
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
+            onClick={() => setSidebarOpen((prev: boolean) => !prev)}
             className="flex items-center justify-center w-full py-2 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white border-b border-slate-700/50"
           >
             <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu</span>
@@ -517,12 +532,22 @@ export default function Dashboard() {
 
               {/* Map Container */}
               <div className="flex-1 min-h-0 rounded-2xl overflow-hidden border-4 border-slate-300/50 shadow-2xl shadow-slate-400/20">
-                <OpenStreetMap
-                  latitude={mapCenter.lat}
-                  longitude={mapCenter.lng}
-                  zoom={mapCenter.zoom}
-                  height="h-full"
-                />
+                {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ? (
+                  <GoogleStyledMap
+                    lat={mapCenter.lat}
+                    lng={mapCenter.lng}
+                    zoom={mapCenter.zoom}
+                    vehicles={vehicles.map(v => ({ id: v.id, lat: v.lat ?? 0, lng: v.lng ?? 0, title: v.codename }))}
+                  />
+                ) : (
+                  // Leaflet realtime fallback
+                  <LeafletRealtimeMap
+                    centerLat={mapCenter.lat}
+                    centerLng={mapCenter.lng}
+                    zoom={mapCenter.zoom}
+                    vehicles={vehicles.map(v => ({ id: v.id!, lat: v.lat ?? 0, lng: v.lng ?? 0, title: v.codename }))}
+                  />
+                )}
               </div>
             </div>
 

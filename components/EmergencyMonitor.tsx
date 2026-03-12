@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
-import { collection, query, onSnapshot, orderBy, where } from "firebase/firestore";
+import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import TICEmergencyModal from "./TICEmergencyModal";
@@ -43,8 +43,13 @@ export default function EmergencyMonitor() {
         ...(doc.data() as Omit<EmergencyReport, "id">),
       }));
 
-      // Find the first emergency report that hasn't been dismissed
-      const activeEmergency = allReports.find(
+      // Filter to only active (non-resolved) emergencies
+      const activeReports = allReports.filter(
+        (report) => report.status !== 'resolved'
+      );
+
+      // Find the first active emergency report that hasn't been dismissed
+      const activeEmergency = activeReports.find(
         (report) => !dismissedEmergencies.has(report.id)
       );
 

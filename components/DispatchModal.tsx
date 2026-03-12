@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import dynamic from "next/dynamic";
+import GoogleStyledMap from "@/components/GoogleStyledMap";
 
 // Dynamic import for Leaflet (avoids SSR errors)
 const LeafletMap = dynamic<{ lat: number; lng: number; onChange: (lat: number, lng: number) => void }>(
@@ -732,14 +733,21 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                             <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shadow-lg shadow-emerald-400/50"></div>
                                         </div>
                                         <div className="rounded-2xl overflow-hidden border-4 border-white shadow-2xl aspect-square relative group">
-                                            <LeafletMap
-                                                lat={parseFloat(lat)}
-                                                lng={parseFloat(lng)}
-                                                onChange={(newLat, newLng) => {
-                                                    setLat(newLat.toFixed(6));
-                                                    setLng(newLng.toFixed(6));
-                                                }}
-                                            />
+                                            {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ? (
+                                                <GoogleStyledMap
+                                                    lat={parseFloat(lat)}
+                                                    lng={parseFloat(lng)}
+                                                />
+                                            ) : (
+                                                <LeafletMap
+                                                    lat={parseFloat(lat)}
+                                                    lng={parseFloat(lng)}
+                                                    onChange={(newLat, newLng) => {
+                                                        setLat(newLat.toFixed(6));
+                                                        setLng(newLng.toFixed(6));
+                                                    }}
+                                                />
+                                            )}
                                             <div className="absolute top-3 right-3 z-[1000] bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-lg shadow-xl font-black text-[10px] text-emerald-700 border-2 border-emerald-200 uppercase tracking-widest hover:scale-105 transition-transform">
                                                 📍 Click to Set
                                             </div>
@@ -1096,11 +1104,11 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                             <div className="flex flex-col lg:flex-row gap-8">
                                 {/* Map Square */}
                                 <div className="w-full lg:w-[400px] h-[400px] flex-shrink-0 relative rounded-3xl overflow-hidden border border-slate-200 shadow-xl bg-slate-50">
-                                    <LeafletMap
-                                        lat={parseFloat(lat)}
-                                        lng={parseFloat(lng)}
-                                        onChange={() => { }} // Read-only in summary
-                                    />
+                                    {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ? (
+                                        <GoogleStyledMap lat={parseFloat(lat)} lng={parseFloat(lng)} />
+                                    ) : (
+                                        <LeafletMap lat={parseFloat(lat)} lng={parseFloat(lng)} onChange={() => { }} />
+                                    )}
                                     <div className="absolute top-4 left-4 z-[1000] bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-lg border border-slate-200 flex items-center gap-2">
                                         <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                                         <span className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">Target Pinned</span>

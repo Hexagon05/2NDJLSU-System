@@ -1,6 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import { doc, updateDoc, Timestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import dynamic from "next/dynamic";
+import GoogleStyledMap from "@/components/GoogleStyledMap";
 
 // Dynamic import for Leaflet
 const LeafletMap = dynamic<{ lat: number; lng: number; onChange?: (lat: number, lng: number) => void }>(
@@ -27,6 +31,7 @@ interface Dispatch {
 interface Props {
     dispatch: Dispatch;
     onClose: () => void;
+    onSuccess?: () => void;
 }
 
 function formatTime(ts: Timestamp | null): string {
@@ -50,8 +55,109 @@ const STATUS_STYLES: Record<string, string> = {
     Completed: "bg-emerald-100 text-emerald-700 border-emerald-200",
 };
 
-export default function DispatchDetailModal({ dispatch, onClose }: Props) {
+export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Props) {
+    const [completing, setCompleting] = useState(false);
+    const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+    // Mark dispatch as delivered/completed
+    const handleCompleteDelivery = async () => {
+        if (!dispatch.id) {
+            return;
+        }
+
+        setShowConfirmModal(true);
+    };
+
+    const confirmComplete = async () => {
+        setShowConfirmModal(false);
+        setCompleting(true);
+        try {
+            const dispatchRef = doc(db, "dispatches", dispatch.id);
+            await updateDoc(dispatchRef, {
+                status: "Completed",
+                deliveredAt: Timestamp.now(),
+                completedAt: Timestamp.now(),
+            });
+
+            setShowSuccessModal(true);
+            onSuccess?.(); // Refresh parent data
+        } catch (error: any) {
+            console.error("Error completing delivery:", error);
+            alert(`Failed to complete delivery: ${error?.message || "Unknown error"}`);
+        } finally {
+            setCompleting(false);
+        }
+    };
+
+    const handleSuccessClose = () => {
+        setShowSuccessModal(false);
+        onClose(); // Close main modal
+    };
+
+    // Check if dispatch can be completed (must be in progress or en route)
+    const canComplete = ["En Route", "Ongoing", "Approved"].includes(dispatch.status);
+
     return (
+        <>
+            {/* Confirmation Modal */}
+            {showConfirmModal && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onClick={() => setShowConfirmModal(false)} />
+                    <div className="relative bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full animate-fade-in">
+                        <div className="text-center">
+                            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-amber-100 mb-4">
+                                <span className="material-symbols-outlined text-amber-600 text-3xl">help</span>
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-2">Mark Delivery as Completed?</h3>
+                            <p className="text-sm text-slate-600 mb-6">
+                                This will update the dispatch status to 'Completed' and record the completion timestamp.
+                            </p>
+                            <div className="flex gap-3 justify-center">
+                                <button
+                                    onClick={() => setShowConfirmModal(false)}
+                                    className="px-6 py-2.5 rounded-xl bg-slate-200 text-slate-700 font-bold text-sm hover:bg-slate-300 transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmComplete}
+                                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold text-sm hover:from-emerald-600 hover:to-green-700 transition-all flex items-center gap-2"
+                                >
+                                    <span className="material-symbols-outlined text-sm">check_circle</span>
+                                    Confirm
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Success Modal */}
+            {showSuccessModal && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onClick={handleSuccessClose} />
+                    <div className="relative bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full animate-fade-in">
+                        <div className="text-center">
+                            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-emerald-100 mb-4">
+                                <span className="material-symbols-outlined text-emerald-600 text-3xl">check_circle</span>
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-2">Delivery Marked as Completed Successfully!</h3>
+                            <p className="text-sm text-slate-600 mb-6">
+                                The dispatch has been updated and will now appear in the history records.
+                            </p>
+                            <button
+                                onClick={handleSuccessClose}
+                                className="px-8 py-3 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-all"
+                            >
+                                OK
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Main Modal */}
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
             <div className="relative w-full max-w-5xl rounded-3xl bg-white shadow-2xl animate-fade-in overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
@@ -95,10 +201,17 @@ export default function DispatchDetailModal({ dispatch, onClose }: Props) {
                     <div className="flex flex-col lg:flex-row gap-8">
                         {/* Interactive Map Box */}
                         <div className="w-full lg:w-[400px] h-[300px] flex-shrink-0 relative rounded-3xl overflow-hidden border border-slate-200 shadow-lg bg-slate-50 group">
-                            <LeafletMap
-                                lat={dispatch.location?.lat || 0}
-                                lng={dispatch.location?.lng || 0}
-                            />
+                            {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ? (
+                                <GoogleStyledMap
+                                    lat={dispatch.location?.lat || 0}
+                                    lng={dispatch.location?.lng || 0}
+                                />
+                            ) : (
+                                <LeafletMap
+                                    lat={dispatch.location?.lat || 0}
+                                    lng={dispatch.location?.lng || 0}
+                                />
+                            )}
                             <div className="absolute top-4 left-4 z-[1000] bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-lg border border-slate-200 flex items-center gap-2">
                                 <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse-slow" />
                                 <span className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">Target Location</span>
@@ -192,13 +305,54 @@ export default function DispatchDetailModal({ dispatch, onClose }: Props) {
                 </div>
 
                 {/* Footer */}
-                <div className="border-t border-slate-100 bg-slate-50 px-6 py-4 flex justify-end gap-3">
-                    <button
-                        onClick={onClose}
-                        className="px-6 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-sm shadow-lg hover:bg-black transition-all active:scale-95"
-                    >
-                        Close Information
-                    </button>
+                <div className="border-t border-slate-100 bg-slate-50 px-6 py-4 flex justify-between items-center gap-3 flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                        {canComplete && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                                <span className="material-symbols-outlined text-emerald-600 text-sm">check_circle</span>
+                                <span className="text-xs font-bold text-emerald-700">Ready to Complete</span>
+                            </div>
+                        )}
+                        {dispatch.status === "Completed" && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                                <span className="material-symbols-outlined text-emerald-600 text-sm">task_alt</span>
+                                <span className="text-xs font-bold text-emerald-700">Already Completed</span>
+                            </div>
+                        )}
+                        {dispatch.status === "Delivered" && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-50 border border-cyan-200 rounded-xl">
+                                <span className="material-symbols-outlined text-cyan-600 text-sm">local_shipping</span>
+                                <span className="text-xs font-bold text-cyan-700">Delivered</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex gap-3">
+                        {canComplete && (
+                            <button
+                                onClick={handleCompleteDelivery}
+                                disabled={completing}
+                                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold text-sm shadow-lg hover:from-emerald-600 hover:to-green-700 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {completing ? (
+                                    <>
+                                        <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                                        Processing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="material-symbols-outlined text-sm">check_circle</span>
+                                        Complete Delivery
+                                    </>
+                                )}
+                            </button>
+                        )}
+                        <button
+                            onClick={onClose}
+                            className="px-6 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-sm shadow-lg hover:bg-black transition-all active:scale-95"
+                        >
+                            Close
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -212,5 +366,6 @@ export default function DispatchDetailModal({ dispatch, onClose }: Props) {
         }
       `}</style>
         </div>
+        </>
     );
 }

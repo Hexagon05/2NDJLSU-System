@@ -41,7 +41,8 @@ export async function uploadImageToCloudinary(
   folder?: string
 ): Promise<CloudinaryUploadResult> {
   // Validate that configuration is set
-  if (CLOUDINARY_CLOUD_NAME === "YOUR_CLOUD_NAME" || CLOUDINARY_UPLOAD_PRESET === "YOUR_UPLOAD_PRESET") {
+  // Basic validation: ensure values are present and not placeholder values
+  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET || /YOUR_/.test(CLOUDINARY_CLOUD_NAME) || /YOUR_/.test(CLOUDINARY_UPLOAD_PRESET)) {
     throw new Error(
       "Cloudinary is not configured. Please update CLOUDINARY_CLOUD_NAME and CLOUDINARY_UPLOAD_PRESET in lib/cloudinary.ts"
     );

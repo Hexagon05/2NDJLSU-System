@@ -7,7 +7,7 @@ import "leaflet/dist/leaflet.css";
 interface LeafletMapProps {
     lat: number;
     lng: number;
-    onChange: (lat: number, lng: number) => void;
+    onChange?: (lat: number, lng: number) => void;
 }
 
 export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
@@ -28,7 +28,7 @@ export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
             // Add click handler
             mapRef.current.on("click", (e: L.LeafletMouseEvent) => {
                 const { lat, lng } = e.latlng;
-                onChange(lat, lng);
+                if (onChange) onChange(lat, lng);
             });
         }
 
