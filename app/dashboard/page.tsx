@@ -10,6 +10,7 @@ import dynamic from "next/dynamic";
 const LeafletRealtimeMap = dynamic(() => import("@/components/LeafletRealtimeMap"), { ssr: false });
 import DispatchModal from "@/components/DispatchModal";
 import DispatchDetailModal from "@/components/DispatchDetailModal";
+import NotificationsDropdown from "@/components/NotificationsDropdown";
 import {
   collection,
   query,
@@ -417,10 +418,7 @@ export default function Dashboard() {
                 Create Dispatch
               </button>
 
-              <button className="relative p-2.5 hover:bg-slate-100 rounded-xl transition-colors group">
-                <span className="material-symbols-outlined text-slate-500 group-hover:text-slate-700" style={{ fontSize: "1.5rem" }}>notifications</span>
-                <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 bg-rose-500 rounded-full animate-pulse ring-2 ring-white"></span>
-              </button>
+              <NotificationsDropdown userEmail={user?.email} />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>

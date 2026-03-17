@@ -17,6 +17,8 @@ import {
 } from "firebase/firestore";
 import { hashPassword } from "@/lib/password-utils";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { logActivity } from "@/lib/activity-logger";
+import NotificationsDropdown from "@/components/NotificationsDropdown";
 
 interface Officer {
     id?: string;
@@ -266,6 +268,22 @@ export default function PersonnelsPage() {
                 imageUrl: imageUrl || "",
             });
             
+            // Log activity
+            if (user?.email) {
+                await logActivity(
+                    "PERSONNEL_CREATED",
+                    `Created personnel: ${form.firstName} ${form.lastName}`,
+                    user.email,
+                    {
+                        firstName: form.firstName,
+                        lastName: form.lastName,
+                        rank: form.rank,
+                        position: form.position,
+                        username: username,
+                    }
+                );
+            }
+            
             setSuccessMsg(`Personnel added successfully! Username: ${username}`);
             setForm({ ...EMPTY_FORM });
             setModalOpen(false);
@@ -486,15 +504,7 @@ export default function PersonnelsPage() {
                             </h1>
                         </div>
                         <div className="flex items-center gap-4">
-                            <button className="relative p-2.5 hover:bg-slate-100 rounded-xl transition-colors group">
-                                <span
-                                    className="material-symbols-outlined text-slate-500 group-hover:text-slate-700"
-                                    style={{ fontSize: "1.5rem" }}
-                                >
-                                    notifications
-                                </span>
-                                <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 bg-rose-500 rounded-full animate-pulse ring-2 ring-white" />
-                            </button>
+                            <NotificationsDropdown userEmail={user?.email} />
                             <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                                 <div className="text-right">
                                     <p className="text-sm font-semibold text-slate-900">{user?.email}</p>

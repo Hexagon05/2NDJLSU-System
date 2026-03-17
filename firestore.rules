@@ -86,6 +86,13 @@ service cloud.firestore {
       allow write: if isWebAdmin();
     }
 
+    // --- Admin Activities (Notification Feed) ---
+    match /activities/{activityId} {
+      allow read: if isWebAdmin();
+      allow create: if isWebAdmin();
+      allow update, delete: if false;
+    }
+
     // --- Default Deny ---
     match /{document=**} {
       allow read, write: if false;

@@ -15,6 +15,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import NotificationsDropdown from "@/components/NotificationsDropdown";
 
 interface EmergencyReport {
   id: string;
@@ -364,17 +365,7 @@ export default function EmergencyAlerts() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Emergency Alerts</h1>
             </div>
             <div className="flex items-center gap-3">
-              <button className="relative p-2.5 hover:bg-slate-100 rounded-xl transition-colors group">
-                <span className="material-symbols-outlined text-slate-500 group-hover:text-slate-700" style={{ fontSize: "1.5rem" }}>notifications</span>
-                {unseenCount > 0 && (
-                  <>
-                    <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 bg-rose-500 rounded-full animate-pulse ring-2 ring-white"></span>
-                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold ring-2 ring-white">
-                      {unseenCount}
-                    </span>
-                  </>
-                )}
-              </button>
+              <NotificationsDropdown userEmail={user?.email ?? undefined} />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>

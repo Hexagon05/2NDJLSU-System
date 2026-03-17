@@ -4,7 +4,10 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
 import Image from "next/image";
+import DispatchDetailModal from "@/components/DispatchDetailModal";
 import { db } from "@/lib/firebase";
+import { logActivity } from "@/lib/activity-logger";
+import NotificationsDropdown from "@/components/NotificationsDropdown";
 import {
   collection,
   query,
@@ -17,9 +20,16 @@ import * as XLSX from "xlsx";
 interface HistoryRecord {
   id: string;
   dispatchId: string;
+  personnels: string;
   vehicle: string;
   event: string;
-  location: string;
+  location: {
+    lat: number;
+    lng: number;
+    label: string;
+  };
+  supplies: { category: string; item: string; quantity: number }[];
+  othersNote?: string;
   timestamp: string;
   officer: string;
   status: string;
@@ -34,6 +44,7 @@ export default function HistoryPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [historyData, setHistoryData] = useState<HistoryRecord[]>([]);
   const [fetchLoading, setFetchLoading] = useState(true);
+  const [selectedDispatch, setSelectedDispatch] = useState<HistoryRecord | null>(null);
 
   // Real-time listener for dispatches
   useEffect(() => {
@@ -56,9 +67,16 @@ export default function HistoryPage() {
         return {
           id: d.id,
           dispatchId: data.dispatchId || "N/A",
+          personnels: data.personnels || "",
           vehicle: data.truck || "Unknown",
           event: eventMap[data.status] || data.status || "Update",
-          location: data.location?.label || "Location unknown",
+          location: {
+            lat: data.location?.lat || 0,
+            lng: data.location?.lng || 0,
+            label: data.location?.label || "Location unknown",
+          },
+          supplies: Array.isArray(data.supplies) ? data.supplies : [],
+          othersNote: data.othersNote || "",
           timestamp: createdAt ? createdAt.toDate().toLocaleString("en-PH", {
             month: "short",
             day: "numeric",
@@ -122,17 +140,40 @@ export default function HistoryPage() {
 
   const handleExportExcel = () => {
     try {
+      const supplyColumns = Array.from(
+        new Set(
+          filteredData.flatMap((record) =>
+            record.supplies.map((supply) => `${supply.category} - ${supply.item}`)
+          )
+        )
+      ).sort((left, right) => left.localeCompare(right));
+
       // Prepare data for export
-      const exportData = filteredData.map((record, index) => ({
-        "No.": index + 1,
-        "Dispatch ID": record.dispatchId,
-        "Vehicle": record.vehicle,
-        "Event": record.event,
-        "Location": record.location,
-        "Officer": record.officer,
-        "Status": record.status,
-        "Timestamp": record.timestamp,
-      }));
+      const exportData = filteredData.map((record, index) => {
+        const supplyData = Object.fromEntries(
+          supplyColumns.map((column) => [column, 0])
+        );
+
+        for (const supply of record.supplies) {
+          const columnName = `${supply.category} - ${supply.item}`;
+          supplyData[columnName] = supply.quantity;
+        }
+
+        return {
+          "No.": index + 1,
+          "Dispatch ID": record.dispatchId,
+          "Vehicle": record.vehicle,
+          "Officer": record.officer,
+          "Personnels": record.personnels || "N/A",
+          "Status": record.status,
+          "Landmark": record.location.label,
+          "Latitude": record.location.lat,
+          "Longitude": record.location.lng,
+          ...supplyData,
+          "Additional Notes": record.othersNote || "N/A",
+          "Timestamp": record.timestamp,
+        };
+      });
 
       // Create a new workbook and worksheet
       const worksheet = XLSX.utils.json_to_sheet(exportData);
@@ -144,10 +185,14 @@ export default function HistoryPage() {
         { wch: 5 },  // No.
         { wch: 15 }, // Dispatch ID
         { wch: 20 }, // Vehicle
-        { wch: 25 }, // Event
-        { wch: 30 }, // Location
         { wch: 30 }, // Officer
+        { wch: 30 }, // Personnels
         { wch: 12 }, // Status
+        { wch: 35 }, // Landmark
+        { wch: 14 }, // Latitude
+        { wch: 14 }, // Longitude
+        ...supplyColumns.map(() => ({ wch: 18 })), // Supply items
+        { wch: 40 }, // Additional Notes
         { wch: 20 }, // Timestamp
       ];
       worksheet['!cols'] = columnWidths;
@@ -159,6 +204,20 @@ export default function HistoryPage() {
 
       // Write and download the file
       XLSX.writeFile(workbook, filename);
+      
+      // Log activity
+      if (user?.email) {
+        logActivity(
+          "EXPORT_EXCEL",
+          `Exported ${filteredData.length} dispatch records to Excel`,
+          user.email,
+          {
+            recordsCount: filteredData.length,
+            filename: filename,
+            timestamp: new Date().toISOString(),
+          }
+        );
+      }
     } catch (error) {
       console.error("Error exporting to Excel:", error);
       alert("Failed to export to Excel. Please try again.");
@@ -169,12 +228,30 @@ export default function HistoryPage() {
     (r) =>
       r.vehicle.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.event.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.location.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.officer.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
+      {selectedDispatch && (
+        <DispatchDetailModal
+          dispatch={{
+            id: selectedDispatch.id,
+            dispatchId: selectedDispatch.dispatchId,
+            officer: selectedDispatch.officer,
+            personnels: selectedDispatch.personnels,
+            truck: selectedDispatch.vehicle,
+            status: selectedDispatch.status,
+            location: selectedDispatch.location,
+            supplies: selectedDispatch.supplies,
+            othersNote: selectedDispatch.othersNote,
+            createdAt: selectedDispatch.createdAt,
+          }}
+          onClose={() => setSelectedDispatch(null)}
+        />
+      )}
+
       {/* Sidebar */}
       <div
         className={`${sidebarOpen ? "w-64" : "w-20"
@@ -258,10 +335,7 @@ export default function HistoryPage() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">History Records</h1>
             </div>
             <div className="flex items-center gap-4">
-              <button className="relative p-2.5 hover:bg-slate-100 rounded-xl transition-colors group">
-                <span className="material-symbols-outlined text-slate-500 group-hover:text-slate-700" style={{ fontSize: "1.5rem" }}>notifications</span>
-                <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 bg-rose-500 rounded-full animate-pulse ring-2 ring-white"></span>
-              </button>
+              <NotificationsDropdown userEmail={user?.email ?? undefined} />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>
@@ -361,7 +435,7 @@ export default function HistoryPage() {
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-600 flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "0.9rem" }}>location_on</span>
-                          {record.location}
+                          {record.location.label}
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-600">
                           <span className="flex items-center gap-1.5">
@@ -370,7 +444,10 @@ export default function HistoryPage() {
                           </span>
                         </td>
                         <td className="px-6 py-4 text-sm">
-                          <button className="flex items-center gap-1 text-blue-600 hover:text-blue-700 font-semibold transition-colors">
+                          <button
+                            onClick={() => setSelectedDispatch(record)}
+                            className="flex items-center gap-1 text-blue-600 hover:text-blue-700 font-semibold transition-colors"
+                          >
                             <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>open_in_new</span>
                             Details
                           </button>

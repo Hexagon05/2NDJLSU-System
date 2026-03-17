@@ -18,6 +18,8 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { logActivity } from "@/lib/activity-logger";
+import NotificationsDropdown from "@/components/NotificationsDropdown";
 
 interface Vehicle {
   id?: string;
@@ -321,6 +323,22 @@ export default function VehiclePage() {
         images: uploadedImages,
         imageUrl: uploadedImages.front || "", // Keep for backward compatibility
       });
+      
+      // Log activity
+      if (user?.email) {
+        await logActivity(
+          "VEHICLE_CREATED",
+          `Created vehicle: ${form.codename} (${form.plate})`,
+          user.email,
+          {
+            codename: form.codename,
+            plate: form.plate,
+            truckType: form.truckType,
+            assignedTo: personnelName,
+          }
+        );
+      }
+      
       setSuccessMsg("Vehicle added successfully!");
       setModalOpen(false);
       setForm({
@@ -609,10 +627,7 @@ export default function VehiclePage() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Vehicle Management</h1>
             </div>
             <div className="flex items-center gap-4">
-              <button className="relative p-2.5 hover:bg-slate-100 rounded-xl transition-colors group">
-                <span className="material-symbols-outlined text-slate-500 group-hover:text-slate-700" style={{ fontSize: "1.5rem" }}>notifications</span>
-                <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 bg-rose-500 rounded-full animate-pulse ring-2 ring-white"></span>
-              </button>
+              <NotificationsDropdown userEmail={user?.email ?? undefined} />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>
