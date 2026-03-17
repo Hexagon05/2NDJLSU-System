@@ -43,9 +43,6 @@ export default function TICEmergencyModal({
   personnelName = "Field Personnel",
   emergencyReportId,
   dispatchId,
-  location,
-  description,
-  imageUrl,
 }: TICEmergencyModalProps) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);

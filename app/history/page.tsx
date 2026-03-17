@@ -278,7 +278,7 @@ export default function HistoryPage() {
           </div>
           {sidebarOpen && (
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => setSidebarOpen((prev: boolean) => !prev)}
               className="rounded-lg p-1.5 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white flex-shrink-0"
             >
               <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu_open</span>
@@ -287,7 +287,7 @@ export default function HistoryPage() {
         </div>
         {!sidebarOpen && (
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
+            onClick={() => setSidebarOpen((prev: boolean) => !prev)}
             className="flex items-center justify-center w-full py-2 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white border-b border-slate-700/50"
           >
             <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu</span>

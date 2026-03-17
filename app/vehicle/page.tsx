@@ -8,6 +8,7 @@ import { db } from "@/lib/firebase";
 import {
   collection,
   addDoc,
+  onSnapshot,
   getDocs,
   Timestamp,
   orderBy,
@@ -101,8 +102,7 @@ export default function VehiclePage() {
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>("");
+  // Single-image preview/state removed — using multi-view imageFiles/imagePreviews instead
   const [viewMode, setViewMode] = useState<"table" | "card">("card");
   
   // Multiple image states
@@ -141,28 +141,32 @@ export default function VehiclePage() {
     }
   };
 
-  const fetchVehicles = async () => {
-    setFetchLoading(true);
-    try {
-      const q = query(collection(db, "vehicles"), orderBy("dateAdded", "desc"));
-      const snap = await getDocs(q);
-      const data = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Vehicle[];
-      setVehicles(data);
-    } catch (e) {
-      console.error("Error fetching vehicles:", e);
-    } finally {
-      setFetchLoading(false);
-    }
-  };
-
   useEffect(() => {
-    if (user) {
+    let unsubVehicles: (() => void) | null = null;
+    const init = async () => {
+      if (!user) return;
       fetchPersonnels();
-      fetchVehicles();
-    }
+      setFetchLoading(true);
+      const q = query(collection(db, "vehicles"), orderBy("dateAdded", "desc"));
+      unsubVehicles = onSnapshot(
+        q,
+        (snap) => {
+          const data = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() as any) })) as Vehicle[];
+          setVehicles(data);
+          setFetchLoading(false);
+        },
+        (err) => {
+          console.error("vehicles onSnapshot error:", err);
+          setFetchLoading(false);
+        }
+      );
+    };
+
+    init();
+
+    return () => {
+      if (unsubVehicles) unsubVehicles();
+    };
   }, [user]);
 
   // Set image preview when editing vehicle with existing images
@@ -208,7 +212,7 @@ export default function VehiclePage() {
               payloadCapacity: newPayload
             });
           }
-          await fetchVehicles();
+          // onSnapshot listener will update vehicles automatically after migration
         }
       };
       migrateVehicles();
@@ -238,31 +242,7 @@ export default function VehiclePage() {
     router.push("/login");
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      // Validate file type
-      const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
-      if (!validTypes.includes(file.type)) {
-        setErrorMsg("Invalid file type. Please upload a valid image (JPEG, PNG, GIF, or WebP).");
-        return;
-      }
-      // Validate file size (max 10MB)
-      const maxSize = 10 * 1024 * 1024;
-      if (file.size > maxSize) {
-        setErrorMsg("File size too large. Maximum size is 10MB.");
-        return;
-      }
-      setImageFile(file);
-      // Create preview
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-      setErrorMsg("");
-    }
-  };
+  // Single-file image handlers were removed in favor of the explicit 4-view image inputs
 
   const handleMultipleImageChange = (e: React.ChangeEvent<HTMLInputElement>, view: 'front' | 'back' | 'left' | 'right') => {
     const file = e.target.files?.[0];
@@ -385,7 +365,7 @@ export default function VehiclePage() {
       });
       setImageFiles({ front: null, back: null, left: null, right: null });
       setImagePreviews({ front: "", back: "", left: "", right: "" });
-      await fetchVehicles();
+  // onSnapshot will refresh the list automatically
       setTimeout(() => setSuccessMsg(""), 3500);
     } catch (err: any) {
       console.error("Error adding vehicle:", err);
@@ -419,8 +399,8 @@ export default function VehiclePage() {
     setErrorMsg(""); // Clear any previous errors
     
     try {
-      // Upload new images if selected
-      const uploadedImages = { ...selectedVehicle.images } || {};
+  // Upload new images if selected
+  const uploadedImages = { ...(selectedVehicle.images || {}) };
       
       setUploadingImage(true);
       try {
@@ -477,7 +457,7 @@ export default function VehiclePage() {
       setSuccessMsg("Vehicle saved successfully!");
       setTimeout(() => setSuccessMsg(""), 3500);
       
-      await fetchVehicles();
+  // onSnapshot will refresh the list automatically
       
       setEditModalOpen(false);
       setImageFiles({ front: null, back: null, left: null, right: null });
@@ -501,7 +481,7 @@ export default function VehiclePage() {
       await deleteDoc(doc(db, "vehicles", selectedVehicle.id));
       setSuccessMsg("Vehicle deleted successfully!");
       setTimeout(() => setSuccessMsg(""), 3500);
-      await fetchVehicles();
+  // onSnapshot will refresh the list automatically
       setDeleteConfirmationOpen(false);
       setEditModalOpen(false);
       setDetailsModalOpen(false);
@@ -590,7 +570,7 @@ export default function VehiclePage() {
           </div>
           {sidebarOpen && (
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => setSidebarOpen((prev: boolean) => !prev)}
               className="rounded-lg p-1.5 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white flex-shrink-0"
             >
               <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu_open</span>
@@ -599,7 +579,7 @@ export default function VehiclePage() {
         </div>
         {!sidebarOpen && (
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
+            onClick={() => setSidebarOpen((prev: boolean) => !prev)}
             className="flex items-center justify-center w-full py-2 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white border-b border-slate-700/50"
           >
             <span className="material-symbols-outlined" style={{ fontSize: "1.25rem" }}>menu</span>
