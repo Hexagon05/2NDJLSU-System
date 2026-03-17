@@ -36,7 +36,19 @@ service cloud.firestore {
     // --- Vehicles & History (Web Admin Only) ---
     match /vehicles/{vehicleId} {
       allow read: if isAuthenticated();
-      allow write: if isWebAdmin();
+      // Web admins can perform any writes. Field personnel may update limited location fields
+      // (lat, lng, lastSeen) for their assigned vehicle to support mobile GPS updates.
+      allow create: if isWebAdmin();
+      allow update: if isWebAdmin() || (
+        isFieldPersonnel() && (
+          // allow if the vehicle is assigned to the current user (personnelId stored on the vehicle)
+          (resource.data.personnelId == request.auth.uid) ||
+          // or the request explicitly sets personnelId to the requester (for initial assignment)
+          (request.resource.data.personnelId == request.auth.uid)
+        )
+        // Restrict updates from field personnel to only these keys
+        && request.resource.data.keys().hasOnly(["lat", "lng", "lastSeen", "personnelId"])
+      );
     }
     
     match /dispatch_history/{historyId} {
@@ -47,10 +59,13 @@ service cloud.firestore {
     // --- Dispatches & Chat Logic ---
     match /dispatches/{dispatchId} {
       allow read: if isAuthenticated();
-      // Only web admins can create and delete dispatches
-      allow create, delete: if isWebAdmin();
+      // Web admins and field personnel (mobile) can create dispatches.
+      // Field personnel need to be able to create emergency/dispatch requests from mobile clients.
+      allow create: if isWebAdmin() || isFieldPersonnel();
+      // Only web admins can delete dispatches
+      allow delete: if isWebAdmin();
       // Both web admins and field personnel can update (for status changes, location updates)
-      allow update: if isAuthenticated(); 
+      allow update: if isWebAdmin() || isFieldPersonnel(); 
 
       // Support Chat logic used by both web and mobile
       match /messages/{messageId} {

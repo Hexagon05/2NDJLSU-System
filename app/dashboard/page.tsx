@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
 import Image from "next/image";
-import { OpenStreetMap } from "@/components/OpenStreetMap";
 import GoogleStyledMap from "@/components/GoogleStyledMap";
 import dynamic from "next/dynamic";
 const LeafletRealtimeMap = dynamic(() => import("@/components/LeafletRealtimeMap"), { ssr: false });
@@ -535,7 +534,7 @@ export default function Dashboard() {
                     lat={mapCenter.lat}
                     lng={mapCenter.lng}
                     zoom={mapCenter.zoom}
-                    vehicles={vehicles.map(v => ({ id: v.id, lat: v.lat ?? 0, lng: v.lng ?? 0, title: v.codename }))}
+                    vehicles={vehiclesForMap}
                   />
                 ) : (
                   // Leaflet realtime fallback
@@ -543,7 +542,7 @@ export default function Dashboard() {
                     centerLat={mapCenter.lat}
                     centerLng={mapCenter.lng}
                     zoom={mapCenter.zoom}
-                    vehicles={vehicles.map(v => ({ id: v.id!, lat: v.lat ?? 0, lng: v.lng ?? 0, title: v.codename }))}
+                    vehicles={vehiclesForMap as any}
                   />
                 )}
               </div>

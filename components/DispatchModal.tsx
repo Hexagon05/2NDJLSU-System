@@ -697,7 +697,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-fade-in">
             <div className="absolute inset-0 bg-gradient-to-br from-slate-900/90 via-slate-800/90 to-emerald-900/80 backdrop-blur-xl" onClick={onClose} />
             <div className="relative z-10 flex flex-col w-full max-w-6xl max-h-[92vh] rounded-3xl bg-gradient-to-br from-white via-slate-50 to-emerald-50/30 shadow-2xl shadow-emerald-500/10 overflow-hidden border border-white/60 animate-scale-in">
                 {/* Header */}
