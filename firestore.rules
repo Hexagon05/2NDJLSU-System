@@ -22,7 +22,10 @@ service cloud.firestore {
     // --- Users Collection (Web Admins Only) ---
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isWebAdmin() && request.auth.uid == userId;
+      // Allow each authenticated user to create/update only their own profile doc.
+      // This is required to bootstrap the first admin document via /setup-admin.
+      allow create, update: if isAuthenticated() && request.auth.uid == userId;
+      allow delete: if isWebAdmin() && request.auth.uid == userId;
     }
 
     // --- Personnel Account Collection (Field Personnel - Mobile App) ---

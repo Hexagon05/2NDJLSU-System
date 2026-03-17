@@ -40,6 +40,9 @@ export default function HistoryPage() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
   const [searchTerm, setSearchTerm] = useState("");
+  const [monthFilter, setMonthFilter] = useState("");
+  const [yearFilter, setYearFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [historyData, setHistoryData] = useState<HistoryRecord[]>([]);
@@ -224,13 +227,29 @@ export default function HistoryPage() {
     }
   };
 
-  const filteredData = historyData.filter(
-    (r) =>
-      r.vehicle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.event.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.location.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.officer.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredData = historyData.filter((r) => {
+    const term = searchTerm.trim().toLowerCase();
+    const hasTextMatch =
+      !term ||
+      r.vehicle.toLowerCase().includes(term) ||
+      r.event.toLowerCase().includes(term) ||
+      r.location.label.toLowerCase().includes(term) ||
+      r.officer.toLowerCase().includes(term) ||
+      r.dispatchId.toLowerCase().includes(term);
+
+    if (!r.createdAt) return hasTextMatch && !monthFilter && !yearFilter && !dateFilter;
+
+    const createdAtDate = r.createdAt.toDate();
+    const monthNumber = createdAtDate.getMonth() + 1;
+    const yearNumber = createdAtDate.getFullYear();
+    const createdAtDateString = `${yearNumber}-${String(monthNumber).padStart(2, "0")}-${String(createdAtDate.getDate()).padStart(2, "0")}`;
+
+    const hasMonthMatch = !monthFilter || monthNumber === Number(monthFilter);
+    const hasYearMatch = !yearFilter || yearNumber === Number(yearFilter);
+    const hasDateMatch = !dateFilter || createdAtDateString === dateFilter;
+
+    return hasTextMatch && hasMonthMatch && hasYearMatch && hasDateMatch;
+  });
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
@@ -364,17 +383,30 @@ export default function HistoryPage() {
                   className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-slate-900 placeholder-slate-400 shadow-sm transition-all focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 />
               </div>
-              <select className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium">
-                <option>All Events</option>
-                <option>Delivery</option>
-                <option>Maintenance</option>
-                <option>Issues</option>
-              </select>
-              <select className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium">
-                <option>This Month</option>
-                <option>Last Month</option>
-                <option>This Year</option>
-              </select>
+              <input
+                type="number"
+                min={1}
+                max={12}
+                placeholder="Month (1-12)"
+                value={monthFilter}
+                onChange={(e) => setMonthFilter(e.target.value)}
+                className="w-40 px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
+              />
+              <input
+                type="number"
+                min={2000}
+                max={2100}
+                placeholder="Year"
+                value={yearFilter}
+                onChange={(e) => setYearFilter(e.target.value)}
+                className="w-36 px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
+              />
+              <input
+                type="date"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+                className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
+              />
               <button
                 onClick={handleExportExcel}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-5 py-3 text-white text-sm font-semibold shadow-lg shadow-emerald-500/30 transition-all hover:shadow-xl hover:shadow-emerald-500/40 active:scale-95"

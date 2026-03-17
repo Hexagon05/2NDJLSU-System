@@ -73,6 +73,7 @@ export default function PersonnelsPage() {
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [confirmationOpen, setConfirmationOpen] = useState(false);
     const [cancelConfirmationOpen, setCancelConfirmationOpen] = useState(false);
+    const [savingEdit, setSavingEdit] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [uploadingImage, setUploadingImage] = useState(false);
@@ -80,6 +81,30 @@ export default function PersonnelsPage() {
     const [imagePreview, setImagePreview] = useState<string>("");
 
     const today = new Date().toISOString().split("T")[0];
+
+    const withTimeout = async <T,>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        try {
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+            });
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    };
+
+    const sanitizePersonnelForUpdate = (personnel: Officer) => {
+        const { id, dateAdded, ...raw } = personnel;
+        const normalized: Record<string, string> = {};
+
+        (Object.keys(raw) as Array<keyof typeof raw>).forEach((key) => {
+            const value = raw[key];
+            normalized[key as string] = typeof value === "string" ? value : "";
+        });
+
+        return normalized;
+    };
 
     const navigationItems = [
         { name: "Dashboard", icon: "dashboard", href: "/dashboard", active: false },
@@ -287,6 +312,8 @@ export default function PersonnelsPage() {
             setSuccessMsg(`Personnel added successfully! Username: ${username}`);
             setForm({ ...EMPTY_FORM });
             setModalOpen(false);
+            setImageFile(null);
+            setImagePreview("");
             await fetchOfficers();
             setTimeout(() => setSuccessMsg(""), 5000);
         } catch (err: any) {
@@ -317,22 +344,35 @@ export default function PersonnelsPage() {
     const handleViewDetails = (officer: Officer) => {
         setSelectedPersonnel(officer);
         setOriginalPersonnel(officer);
+        setImageFile(null);
+        setImagePreview(officer.imageUrl || "");
+        setErrorMsg("");
         setDetailsModalOpen(true);
     };
 
     const handleSaveChanges = () => {
+        if (savingEdit) return;
         setConfirmationOpen(true);
     };
 
-    const handleConfirmSave = async () => {
-        if (!selectedPersonnel || !selectedPersonnel.id) return;
+    const handleConfirmSave = async (): Promise<boolean> => {
+        if (!selectedPersonnel || !selectedPersonnel.id || savingEdit) return false;
+        setSavingEdit(true);
+        setErrorMsg("");
+
         try {
+            const personnelSnapshot = { ...selectedPersonnel };
+
             // Upload image if a new image was selected
-            let imageUrl = selectedPersonnel.imageUrl || "";
+            let imageUrl = personnelSnapshot.imageUrl || "";
             if (imageFile) {
                 setUploadingImage(true);
                 try {
-                    const uploadResult = await uploadImageToCloudinary(imageFile, "personnel");
+                    const uploadResult = await withTimeout(
+                        uploadImageToCloudinary(imageFile, "personnel"),
+                        30000,
+                        "Image upload timed out. Please try again."
+                    );
                     imageUrl = uploadResult.secure_url;
                 } catch (error) {
                     console.error("Image upload error:", error);
@@ -342,26 +382,47 @@ export default function PersonnelsPage() {
                 }
             }
 
-            const { id, dateAdded, ...dataToUpdate } = selectedPersonnel;
-            await updateDoc(doc(db, "personnelAccount", selectedPersonnel.id), {
+            const dataToUpdate = sanitizePersonnelForUpdate(personnelSnapshot);
+            await withTimeout(
+                updateDoc(doc(db, "personnelAccount", personnelSnapshot.id as string), {
                 ...dataToUpdate,
                 imageUrl,
-            });
+                }),
+                20000,
+                "Save request timed out. Please check your connection and try again."
+            );
+
             // Update both selectedPersonnel and originalPersonnel with the new imageUrl
-            const updatedPersonnel = { ...selectedPersonnel, imageUrl };
+            const updatedPersonnel = { ...personnelSnapshot, imageUrl };
             setSelectedPersonnel(updatedPersonnel);
             setOriginalPersonnel(updatedPersonnel);
+            setPersonnels((prev) =>
+                prev.map((personnel) =>
+                    personnel.id === updatedPersonnel.id ? updatedPersonnel : personnel
+                )
+            );
+
             setSuccessMsg("Personnel updated successfully!");
             setTimeout(() => setSuccessMsg(""), 3500);
-            await fetchOfficers();
             setConfirmationOpen(false);
+            setCancelConfirmationOpen(false);
             setEditModalOpen(false);
             setDetailsModalOpen(true);
             setImageFile(null);
             setImagePreview("");
-        } catch (error) {
+            return true;
+        } catch (error: any) {
             console.error("Error saving personnel details:", error);
-            setErrorMsg("Failed to save personnel. Please try again.");
+
+            const message = String(error?.message || "");
+            if (message.toLowerCase().includes("permission") || message.toLowerCase().includes("insufficient")) {
+                setErrorMsg("Permission denied while updating personnel. Please check Firestore rules/admin setup.");
+            } else {
+                setErrorMsg(message || "Failed to save personnel. Please try again.");
+            }
+            return false;
+        } finally {
+            setSavingEdit(false);
         }
     };
 
@@ -1281,6 +1342,8 @@ export default function PersonnelsPage() {
                             <button
                                 onClick={() => {
                                     setDetailsModalOpen(false);
+                                    setImageFile(null);
+                                    setErrorMsg("");
                                     setEditModalOpen(true);
                                 }}
                                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 py-2.5 px-6 text-sm font-bold text-white shadow-lg shadow-slate-900/30 hover:shadow-xl active:scale-95 transition-all"
@@ -1318,6 +1381,13 @@ export default function PersonnelsPage() {
                             </button>
                         </div>
                         <form onSubmit={(e) => { e.preventDefault(); handleSaveChanges(); }} className="p-6 space-y-4">
+                            {errorMsg && (
+                                <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700 text-sm">
+                                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>error</span>
+                                    <span>{errorMsg}</span>
+                                </div>
+                            )}
+
                             {/* Profile Image Upload Section */}
                             <div className="flex flex-col items-center border-2 border-slate-300 bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-2xl p-6 mb-4">
                                 <label className="block text-sm font-bold text-slate-700 mb-3 uppercase tracking-wide">
@@ -1501,12 +1571,13 @@ export default function PersonnelsPage() {
                                 </button>
                                 <button
                                     type="submit"
+                                    disabled={savingEdit}
                                     className="flex items-center justify-center gap-2 flex-1 rounded-xl bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 py-3 text-sm font-bold text-white shadow-lg shadow-slate-900/30 hover:shadow-xl active:scale-95 transition-all"
                                 >
                                     <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>
                                         save
                                     </span>
-                                    Save Changes
+                                    {savingEdit ? "Saving..." : "Save Changes"}
                                 </button>
                             </div>
                         </form>
@@ -1525,6 +1596,9 @@ export default function PersonnelsPage() {
                         <div className="p-6 text-center">
                             <h3 className="text-lg font-bold text-slate-900">Confirm Save</h3>
                             <p className="text-sm text-slate-600 mt-2">Are you sure you want to save the changes?</p>
+                            {errorMsg && (
+                                <p className="mt-3 text-xs text-rose-600 font-medium">{errorMsg}</p>
+                            )}
                             <div className="mt-4 flex justify-center gap-4">
                                 <button
                                     onClick={() => setConfirmationOpen(false)}
@@ -1534,9 +1608,10 @@ export default function PersonnelsPage() {
                                 </button>
                                 <button
                                     onClick={handleConfirmSave}
-                                    className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-semibold"
+                                    disabled={savingEdit}
+                                    className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    Confirm
+                                    {savingEdit ? "Saving..." : "Confirm"}
                                 </button>
                             </div>
                         </div>
@@ -1581,17 +1656,20 @@ export default function PersonnelsPage() {
                             <div className="flex gap-3">
                                 <button
                                     onClick={async () => {
-                                        await handleConfirmSave();
-                                        setCancelConfirmationOpen(false);
-                                        setEditModalOpen(false);
-                                        setDetailsModalOpen(true);
+                                        const saved = await handleConfirmSave();
+                                        if (saved) {
+                                            setCancelConfirmationOpen(false);
+                                            setEditModalOpen(false);
+                                            setDetailsModalOpen(true);
+                                        }
                                     }}
+                                    disabled={savingEdit}
                                     className="flex items-center justify-center gap-2 flex-1 rounded-lg bg-gradient-to-r from-slate-800 via-teal-900 to-slate-800 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/30 hover:shadow-xl transition-all"
                                 >
                                     <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>
                                         save
                                     </span>
-                                    Save changes
+                                    {savingEdit ? "Saving..." : "Save changes"}
                                 </button>
                                 <button
                                     onClick={() => {
@@ -1600,6 +1678,7 @@ export default function PersonnelsPage() {
                                         setDetailsModalOpen(true);
                                         setSelectedPersonnel(originalPersonnel);
                                     }}
+                                    disabled={savingEdit}
                                     className="flex-1 rounded-lg border-2 border-slate-300 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all"
                                 >
                                     Exit

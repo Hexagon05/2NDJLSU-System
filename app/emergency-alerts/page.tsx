@@ -39,6 +39,9 @@ export default function EmergencyAlerts() {
   const [emergencyReports, setEmergencyReports] = useState<EmergencyReport[]>([]);
   const [seenReportIds, setSeenReportIds] = useState<Set<string>>(new Set());
   const prevReportsCount = useRef(0);
+  const [resolvedSearch, setResolvedSearch] = useState("");
+  const [resolvedPage, setResolvedPage] = useState(1);
+  const RESOLVED_PER_PAGE = 5;
 
   // Fetch all emergency reports from Firebase
   useEffect(() => {
@@ -275,6 +278,7 @@ export default function EmergencyAlerts() {
           location={selectedReport.location}
           description={selectedReport.description}
           imageUrl={selectedReport.imageUrl}
+          isResolved={selectedReport.status === 'resolved'}
         />
       )}
 
@@ -614,107 +618,180 @@ export default function EmergencyAlerts() {
           </div>
 
           {/* Resolved Emergency Reports Table */}
-          {stats.resolvedEmergencies > 0 && (
-            <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-green-50 to-emerald-50">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-green-600" style={{ fontSize: "1.5rem" }}>task_alt</span>
-                    <h2 className="text-lg font-bold text-slate-900">Resolved Emergencies</h2>
-                  </div>
-                  <div className="text-xs text-slate-500 font-medium">
-                    {stats.resolvedEmergencies} {stats.resolvedEmergencies === 1 ? 'report' : 'reports'}
+          {stats.resolvedEmergencies > 0 && (() => {
+            const allResolved = emergencyReports.filter(r => r.status === 'resolved');
+            const filtered = allResolved.filter(r => {
+              const term = resolvedSearch.toLowerCase();
+              if (!term) return true;
+              return (
+                (r.senderName || r.reportedBy || '').toLowerCase().includes(term) ||
+                (r.type || '').toLowerCase().includes(term) ||
+                (r.description || '').toLowerCase().includes(term) ||
+                (r.location?.label || '').toLowerCase().includes(term) ||
+                (r.id || '').toLowerCase().includes(term)
+              );
+            });
+            const totalPages = Math.max(1, Math.ceil(filtered.length / RESOLVED_PER_PAGE));
+            const safePage = Math.min(resolvedPage, totalPages);
+            const paginated = filtered.slice((safePage - 1) * RESOLVED_PER_PAGE, safePage * RESOLVED_PER_PAGE);
+
+            return (
+              <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-green-50 to-emerald-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-green-600" style={{ fontSize: "1.5rem" }}>task_alt</span>
+                      <h2 className="text-lg font-bold text-slate-900">Resolved Emergencies</h2>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {/* Search bar */}
+                      <div className="relative">
+                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" style={{ fontSize: "1rem" }}>search</span>
+                        <input
+                          type="text"
+                          value={resolvedSearch}
+                          onChange={(e) => { setResolvedSearch(e.target.value); setResolvedPage(1); }}
+                          placeholder="Search resolved..."
+                          className="pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-400/30 focus:border-green-400 transition-all w-52"
+                        />
+                      </div>
+                      <div className="text-xs text-slate-500 font-medium">
+                        {filtered.length} {filtered.length === 1 ? 'report' : 'reports'}
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gradient-to-r from-slate-50 to-slate-100 border-b-2 border-slate-200">
-                    <tr>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Report ID</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Personnel</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Type</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Status</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Description</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Location</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Time</th>
-                      <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {emergencyReports.filter(r => r.status === 'resolved').map((report, index) => (
-                      <tr 
-                        key={report.id || `resolved-report-${index}`} 
-                        className="hover:bg-green-50/50 transition-colors"
-                      >
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col">
-                            <span className="font-mono text-xs font-bold text-slate-500">
-                              #{report.id ? report.id.slice(-6).toUpperCase() : 'N/A'}
-                            </span>
-                            <span className="text-xs text-slate-400 mt-1">
-                              {formatTimestamp(report.timestamp)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="material-symbols-outlined text-blue-600" style={{ fontSize: "1.25rem" }}>
-                              person
-                            </span>
-                            <span className="text-sm font-semibold text-slate-900">{report.senderName || report.reportedBy || "Unknown"}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-rose-100 text-rose-700 border-rose-300">
-                            {report.type || "EMERGENCY"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-green-100 text-green-700 border-green-300">
-                            <span className="mr-1.5 h-2 w-2 rounded-full bg-green-500"></span>
-                            RESOLVED
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="max-w-xs">
-                            <span className="text-xs text-slate-600 line-clamp-2">{report.description || "No description provided"}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-start gap-1.5 max-w-xs">
-                            <span className="material-symbols-outlined text-green-500 flex-shrink-0" style={{ fontSize: "1rem" }}>
-                              location_on
-                            </span>
-                            <div className="flex flex-col">
-                              <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
-                              <span className="text-xs text-slate-400 mt-0.5">
-                                {report.location?.lat.toFixed(4)}°, {report.location?.lng.toFixed(4)}°
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="text-xs font-medium text-slate-700">
-                            {getTimeElapsed(report.timestamp)}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <button
-                            onClick={() => handleReportClick(report)}
-                            className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100 transition-colors border border-green-200 hover:border-green-300"
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>visibility</span>
-                            View Details
-                          </button>
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gradient-to-r from-slate-50 to-slate-100 border-b-2 border-slate-200">
+                      <tr>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Report ID</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Personnel</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Type</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Description</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Location</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Time</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {paginated.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-6 py-10 text-center">
+                            <div className="flex flex-col items-center justify-center text-slate-400">
+                              <span className="material-symbols-outlined mb-2" style={{ fontSize: "2.5rem" }}>search_off</span>
+                              <p className="text-sm font-semibold">No results found</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        paginated.map((report, index) => (
+                          <tr
+                            key={report.id || `resolved-report-${index}`}
+                            className="hover:bg-green-50/50 transition-colors"
+                          >
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col">
+                                <span className="font-mono text-xs font-bold text-slate-500">
+                                  #{report.id ? report.id.slice(-6).toUpperCase() : 'N/A'}
+                                </span>
+                                <span className="text-xs text-slate-400 mt-1">
+                                  {formatTimestamp(report.timestamp)}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2">
+                                <span className="material-symbols-outlined text-blue-600" style={{ fontSize: "1.25rem" }}>person</span>
+                                <span className="text-sm font-semibold text-slate-900">{report.senderName || report.reportedBy || "Unknown"}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-rose-100 text-rose-700 border-rose-300">
+                                {report.type || "EMERGENCY"}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-green-100 text-green-700 border-green-300">
+                                <span className="mr-1.5 h-2 w-2 rounded-full bg-green-500"></span>
+                                RESOLVED
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="max-w-xs">
+                                <span className="text-xs text-slate-600 line-clamp-2">{report.description || "No description provided"}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex items-start gap-1.5 max-w-xs">
+                                <span className="material-symbols-outlined text-green-500 flex-shrink-0" style={{ fontSize: "1rem" }}>location_on</span>
+                                <div className="flex flex-col">
+                                  <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
+                                  <span className="text-xs text-slate-400 mt-0.5">
+                                    {report.location?.lat.toFixed(4)}°, {report.location?.lng.toFixed(4)}°
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="text-xs font-medium text-slate-700">{getTimeElapsed(report.timestamp)}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <button
+                                onClick={() => handleReportClick(report)}
+                                className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100 transition-colors border border-green-200 hover:border-green-300"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>visibility</span>
+                                View Details
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+                    <p className="text-xs text-slate-500 font-medium">
+                      Showing {(safePage - 1) * RESOLVED_PER_PAGE + 1}–{Math.min(safePage * RESOLVED_PER_PAGE, filtered.length)} of {filtered.length}
+                    </p>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setResolvedPage(p => Math.max(1, p - 1))}
+                        disabled={safePage === 1}
+                        className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chevron_left</span>
+                      </button>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                        <button
+                          key={page}
+                          onClick={() => setResolvedPage(page)}
+                          className={`flex items-center justify-center w-8 h-8 rounded-lg border text-xs font-bold transition-colors ${
+                            page === safePage
+                              ? 'bg-green-600 border-green-600 text-white'
+                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setResolvedPage(p => Math.min(totalPages, p + 1))}
+                        disabled={safePage === totalPages}
+                        className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chevron_right</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
         </main>
       </div>
 
