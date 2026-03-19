@@ -63,9 +63,13 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const { user } = useAuth();
     // Core form state
     const [dispatchId, setDispatchId] = useState("");
-    const [lat, setLat] = useState("9.748257");
-    const [lng, setLng] = useState("118.771556");
-    const [locationLabel, setLocationLabel] = useState("");
+    const [startLat, setStartLat] = useState("9.748257");
+    const [startLng, setStartLng] = useState("118.771556");
+    const [startLocationLabel, setStartLocationLabel] = useState("Base Camp");
+    const [deliveryLat, setDeliveryLat] = useState("9.748257");
+    const [deliveryLng, setDeliveryLng] = useState("118.771556");
+    const [deliveryLocationLabel, setDeliveryLocationLabel] = useState("");
+    const [pinTarget, setPinTarget] = useState<"start" | "delivery">("delivery");
     const [personnels, setPersonnels] = useState("");
     const [personnelIncluded, setPersonnelIncluded] = useState("");
     const [truck, setTruck] = useState("");
@@ -473,7 +477,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                 <td class="label-cell">Personnel Included:</td>
                 <td>${personnelIncluded || 'N/A'}</td>
                 <td class="label-cell">Target Location:</td>
-                <td>${locationLabel || `${lat}, ${lng}`}</td>
+                <td>${deliveryLocationLabel || `${deliveryLat}, ${deliveryLng}`}</td>
             </tr>
         </table>
     </div>
@@ -622,6 +626,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const handleSubmit = async () => {
         if (!personnels.trim()) { setError("Personnel assignment is required."); return; }
         if (!truck) { setError("Truck selection is required."); return; }
+        if (!hasBlowbagets) { setError("All BLOWBAGETS checklist items must be checked before submitting."); return; }
         setError("");
         setSubmitting(true);
 
@@ -642,10 +647,21 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                 tx.set(counterRef, { count: newCount }, { merge: true });
                 tx.set(dispatchRef, {
                     dispatchId: finalId,
+                    startLocation: {
+                        lat: parseFloat(startLat),
+                        lng: parseFloat(startLng),
+                        label: startLocationLabel || `${startLat}, ${startLng}`,
+                    },
+                    deliveryLocation: {
+                        lat: parseFloat(deliveryLat),
+                        lng: parseFloat(deliveryLng),
+                        label: deliveryLocationLabel || `${deliveryLat}, ${deliveryLng}`,
+                    },
+                    // Backward-compatible field for existing screens and historical data
                     location: {
-                        lat: parseFloat(lat),
-                        lng: parseFloat(lng),
-                        label: locationLabel || `${lat}, ${lng}`,
+                        lat: parseFloat(deliveryLat),
+                        lng: parseFloat(deliveryLng),
+                        label: deliveryLocationLabel || `${deliveryLat}, ${deliveryLng}`,
                     },
                     officer: personnels.trim(),
                     personnels: personnels.trim(),
@@ -673,7 +689,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                         dispatchId: createdDispatchId,
                         officer: personnels.trim(),
                         truck,
-                        location: locationLabel || `${lat}, ${lng}`,
+                        location: deliveryLocationLabel || `${deliveryLat}, ${deliveryLng}`,
                         suppliesCount: activeSupplies.length,
                     }
                 );
@@ -741,42 +757,80 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                         <div className="h-9 w-9 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-lg">
                                             <span className="material-symbols-outlined text-white" style={{ fontSize: "1.3rem" }}>add_location_alt</span>
                                         </div>
-                                        <span className="text-sm font-black text-white tracking-wide uppercase">Target Location</span>
+                                        <span className="text-sm font-black text-white tracking-wide uppercase">Start & Delivery Pin Point</span>
                                         <div className="ml-auto">
                                             <span className="px-2.5 py-0.5 bg-white/20 rounded-full text-[9px] font-bold text-white uppercase tracking-wider backdrop-blur-sm border border-white/30">Required</span>
                                         </div>
                                     </div>
                                     <div className="p-5 space-y-4">
                                         <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl border border-slate-700 font-mono text-xs text-slate-300 shadow-lg">
-                                            <span className="text-emerald-400 font-bold uppercase tracking-wider text-[10px]">Coords:</span>
-                                            <span className="font-black text-emerald-300 text-xs">{lat}, {lng}</span>
+                                            <span className="text-emerald-400 font-bold uppercase tracking-wider text-[10px]">Editing:</span>
+                                            <span className="font-black text-emerald-300 text-xs">{pinTarget === "start" ? "Starting Pin Point" : "Delivery Pin Point"}</span>
                                             <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shadow-lg shadow-emerald-400/50"></div>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setPinTarget("start")}
+                                                className={`rounded-xl border-2 px-3 py-2 text-xs font-bold transition-all ${pinTarget === "start" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-600 hover:border-blue-300"}`}
+                                            >
+                                                Set Starting Pin Point
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setPinTarget("delivery")}
+                                                className={`rounded-xl border-2 px-3 py-2 text-xs font-bold transition-all ${pinTarget === "delivery" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-300"}`}
+                                            >
+                                                Set Delivery Pin Point
+                                            </button>
                                         </div>
                                         <div className="rounded-2xl overflow-hidden border-4 border-white shadow-2xl aspect-square relative group">
                                             <LeafletMap
-                                                lat={parseFloat(lat)}
-                                                lng={parseFloat(lng)}
+                                                lat={parseFloat(pinTarget === "start" ? startLat : deliveryLat)}
+                                                lng={parseFloat(pinTarget === "start" ? startLng : deliveryLng)}
                                                 onChange={(newLat, newLng) => {
-                                                    setLat(newLat.toFixed(6));
-                                                    setLng(newLng.toFixed(6));
+                                                    if (pinTarget === "start") {
+                                                        setStartLat(newLat.toFixed(6));
+                                                        setStartLng(newLng.toFixed(6));
+                                                    } else {
+                                                        setDeliveryLat(newLat.toFixed(6));
+                                                        setDeliveryLng(newLng.toFixed(6));
+                                                    }
                                                 }}
                                             />
                                             <div className="absolute top-3 right-3 z-[1000] bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-lg shadow-xl font-black text-[10px] text-emerald-700 border-2 border-emerald-200 uppercase tracking-widest hover:scale-105 transition-transform">
                                                 📍 Click to Set
                                             </div>
                                         </div>
-                                        <div>
-                                            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                                                <span className="h-1 w-1 rounded-full bg-emerald-500"></span>
-                                                Location Label
-                                            </label>
-                                            <input
-                                                type="text"
-                                                value={locationLabel}
-                                                onChange={(e) => setLocationLabel(e.target.value)}
-                                                className="w-full rounded-xl border-2 border-slate-200 px-4 py-2.5 text-sm font-medium focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 focus:outline-none transition-all bg-white shadow-sm hover:shadow-md"
-                                                placeholder="e.g. Puerto Princesa Main Camp"
-                                            />
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div className="space-y-2">
+                                                <label className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                                    <span className="h-1 w-1 rounded-full bg-blue-500"></span>
+                                                    Starting Pin Point
+                                                </label>
+                                                <p className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-mono text-slate-700">{startLat}, {startLng}</p>
+                                                <input
+                                                    type="text"
+                                                    value={startLocationLabel}
+                                                    onChange={(e) => setStartLocationLabel(e.target.value)}
+                                                    className="w-full rounded-xl border-2 border-slate-200 px-4 py-2.5 text-sm font-medium focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none transition-all bg-white shadow-sm hover:shadow-md"
+                                                    placeholder="e.g. AFP Base Camp"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                                    <span className="h-1 w-1 rounded-full bg-emerald-500"></span>
+                                                    Delivery Pin Point
+                                                </label>
+                                                <p className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-mono text-slate-700">{deliveryLat}, {deliveryLng}</p>
+                                                <input
+                                                    type="text"
+                                                    value={deliveryLocationLabel}
+                                                    onChange={(e) => setDeliveryLocationLabel(e.target.value)}
+                                                    className="w-full rounded-xl border-2 border-slate-200 px-4 py-2.5 text-sm font-medium focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 focus:outline-none transition-all bg-white shadow-sm hover:shadow-md"
+                                                    placeholder="e.g. Puerto Princesa Main Camp"
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1118,8 +1172,8 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                 {/* Map Square */}
                                 <div className="w-full lg:w-[400px] h-[400px] flex-shrink-0 relative rounded-3xl overflow-hidden border border-slate-200 shadow-xl bg-slate-50">
                                     <LeafletMap
-                                        lat={parseFloat(lat)}
-                                        lng={parseFloat(lng)}
+                                        lat={parseFloat(deliveryLat)}
+                                        lng={parseFloat(deliveryLng)}
                                         onChange={() => { }} // Read-only in summary
                                     />
                                     <div className="absolute top-4 left-4 z-[1000] bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-lg border border-slate-200 flex items-center gap-2">
@@ -1127,7 +1181,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                         <span className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">Target Pinned</span>
                                     </div>
                                     <div className="absolute bottom-4 left-4 z-[1000] bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-[9px] font-mono text-white border border-white/20">
-                                        {lat}, {lng}
+                                        {deliveryLat}, {deliveryLng}
                                     </div>
                                 </div>
 
@@ -1150,15 +1204,29 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                         </div>
 
                                         {/* Target Location */}
+                                        <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-sm hover:border-blue-200 transition-colors">
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Starting Pin Point</p>
+                                            <div className="flex items-start gap-3">
+                                                <div className="h-10 w-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+                                                    <span className="material-symbols-outlined">trip_origin</span>
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-slate-900 leading-snug">{startLocationLabel || "Unlabeled Start"}</p>
+                                                    <p className="text-xs text-slate-500 mt-0.5">{startLat}, {startLng}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Delivery Location */}
                                         <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-sm hover:border-emerald-200 transition-colors">
-                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Target Destination</p>
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Delivery Pin Point</p>
                                             <div className="flex items-start gap-3">
                                                 <div className="h-10 w-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
                                                     <span className="material-symbols-outlined">location_on</span>
                                                 </div>
                                                 <div>
-                                                    <p className="font-bold text-slate-900 leading-snug">{locationLabel || "Unlabeled Marker"}</p>
-                                                    <p className="text-xs text-slate-500 mt-0.5">Primary Target Zone</p>
+                                                    <p className="font-bold text-slate-900 leading-snug">{deliveryLocationLabel || "Unlabeled Marker"}</p>
+                                                    <p className="text-xs text-slate-500 mt-0.5">{deliveryLat}, {deliveryLng}</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -1354,7 +1422,17 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                         )}
                         <button
                             type="button"
-                            onClick={() => step === "form" ? setStep("summary") : handleSubmit()}
+                            onClick={() => {
+                                if (step === "form") {
+                                    if (!personnels.trim()) { setError("Personnel assignment is required."); return; }
+                                    if (!truck) { setError("Truck selection is required."); return; }
+                                    if (!hasBlowbagets) { setError("All BLOWBAGETS checklist items must be checked before proceeding to summary review."); return; }
+                                    setError("");
+                                    setStep("summary");
+                                    return;
+                                }
+                                handleSubmit();
+                            }}
                             disabled={submitting}
                             className="group relative bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-900 text-white px-10 py-3.5 rounded-xl font-black text-sm shadow-2xl shadow-emerald-500/30 hover:shadow-emerald-500/50 hover:scale-105 transition-all duration-300 flex items-center gap-3 disabled:opacity-50 disabled:hover:scale-100 overflow-hidden"
                         >

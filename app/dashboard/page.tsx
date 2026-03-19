@@ -17,8 +17,11 @@ import {
   Timestamp,
   where,
   getDocs,
+  doc,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { logActivity } from "@/lib/activity-logger";
 
 interface Dispatch {
   id: string;
@@ -27,7 +30,9 @@ interface Dispatch {
   personnels: string;
   truck: string;
   status: string;
-  location: { lat: number; lng: number; label: string };
+  location?: { lat: number; lng: number; label: string };
+  startLocation?: { lat: number; lng: number; label: string };
+  deliveryLocation?: { lat: number; lng: number; label: string };
   supplies: { category: string; item: string; quantity: number }[];
   createdAt: Timestamp | null;
 }
@@ -67,6 +72,8 @@ const STATUS_STYLES: Record<string, string> = {
     "bg-cyan-100 text-cyan-700 border border-cyan-300",
   Completed:
     "bg-emerald-100 text-emerald-700 border border-emerald-300",
+  Cancelled:
+    "bg-rose-100 text-rose-700 border border-rose-300",
 };
 
 export default function Dashboard() {
@@ -292,6 +299,43 @@ export default function Dashboard() {
       time: getRelativeTime(d.createdAt),
     };
   });
+
+  const canCancelDispatch = (status: string) => {
+    return ["Pending", "Approved", "En Route", "Ongoing"].includes(status);
+  };
+
+  const handleCancelDispatch = async (dispatch: Dispatch, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (!dispatch.id || !canCancelDispatch(dispatch.status)) {
+      return;
+    }
+
+    const confirmed = confirm(`Cancel dispatch ${dispatch.dispatchId}?`);
+    if (!confirmed) return;
+
+    try {
+      const dispatchRef = doc(db, "dispatches", dispatch.id);
+      await updateDoc(dispatchRef, {
+        status: "Cancelled",
+        cancelledAt: Timestamp.now(),
+      });
+
+      if (user?.email) {
+        await logActivity(
+          "DISPATCH_UPDATED",
+          `Cancelled dispatch ${dispatch.dispatchId}`,
+          user.email,
+          { dispatchId: dispatch.dispatchId }
+        );
+      }
+
+      setDispatchRefresh((n) => n + 1);
+    } catch (error) {
+      console.error("Error cancelling dispatch:", error);
+      alert("Failed to cancel dispatch. Please try again.");
+    }
+  };
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
@@ -583,18 +627,29 @@ export default function Dashboard() {
                   ) : (
                     <div className="divide-y divide-slate-50">
                       {dispatches.map((d) => (
-                        <button
+                        <div
                           key={d.id}
                           onClick={() => setSelectedDispatch(d)}
-                          className="w-full text-left p-4 hover:bg-slate-50 transition-all active:bg-slate-100 group border-none outline-none"
+                          className="w-full text-left p-4 hover:bg-slate-50 transition-all active:bg-slate-100 group border-none outline-none cursor-pointer"
                         >
                           <div className="flex items-start justify-between mb-2">
                             <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded uppercase group-hover:bg-slate-200 transition-colors">
                               #{d.dispatchId.split('-').pop()}
                             </span>
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase transition-all ${STATUS_STYLES[d.status] ?? "bg-slate-100 text-slate-600"}`}>
-                              {d.status}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase transition-all ${STATUS_STYLES[d.status] ?? "bg-slate-100 text-slate-600"}`}>
+                                {d.status}
+                              </span>
+                              {canCancelDispatch(d.status) && (
+                                <button
+                                  onClick={(e) => handleCancelDispatch(d, e)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700 hover:bg-rose-100"
+                                >
+                                  <span className="material-symbols-outlined" style={{ fontSize: "0.8rem" }}>cancel</span>
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-2 mb-2">
                             <div className="h-6 w-6 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all">
@@ -605,11 +660,11 @@ export default function Dashboard() {
                           <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium">
                             <div className="flex items-center gap-1 truncate max-w-[70%]">
                               <span className="material-symbols-outlined text-emerald-500" style={{ fontSize: "0.85rem" }}>location_on</span>
-                              <span className="truncate">{d.location?.label || "Location unknown"}</span>
+                              <span className="truncate">{d.deliveryLocation?.label || d.location?.label || "Location unknown"}</span>
                             </div>
                             <span className="whitespace-nowrap opacity-60 font-mono italic">{formatTime(d.createdAt).split(',')[0]}</span>
                           </div>
-                        </button>
+                        </div>
                       ))}
                     </div>
                   )}

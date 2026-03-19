@@ -39,9 +39,17 @@ export default function EmergencyAlerts() {
   const [emergencyReports, setEmergencyReports] = useState<EmergencyReport[]>([]);
   const [seenReportIds, setSeenReportIds] = useState<Set<string>>(new Set());
   const prevReportsCount = useRef(0);
+  const [activePage, setActivePage] = useState(1);
   const [resolvedSearch, setResolvedSearch] = useState("");
   const [resolvedPage, setResolvedPage] = useState(1);
+  const ACTIVE_PER_PAGE = 5;
   const RESOLVED_PER_PAGE = 5;
+
+  const normalizeStatus = (status?: string) => (status || "").trim().toLowerCase();
+  const isResolvedStatus = (status?: string) => {
+    const normalized = normalizeStatus(status);
+    return ["resolved", "complete", "completed", "closed", "cancelled", "canceled"].includes(normalized);
+  };
 
   // Fetch all emergency reports from Firebase
   useEffect(() => {
@@ -98,7 +106,7 @@ export default function EmergencyAlerts() {
     
     // Check if there's a new report (not in seen list and not resolved)
     const unseenReports = emergencyReports.filter(report => 
-      report.id && !seenReportIds.has(report.id) && report.status !== 'resolved'
+      report.id && !seenReportIds.has(report.id) && !isResolvedStatus(report.status)
     );
     
     if (unseenReports.length > 0 && emergencyReports.length > prevReportsCount.current) {
@@ -198,24 +206,6 @@ export default function EmergencyAlerts() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
-        <div className="text-center">
-          <span className="material-symbols-outlined animate-spin text-blue-400" style={{ fontSize: "3rem" }}>
-            progress_activity
-          </span>
-          <p className="mt-4 text-slate-300 font-medium tracking-wide">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    router.push("/login");
-    return null;
-  }
-
   const handleLogout = async () => {
     await signOut();
     router.push("/login");
@@ -256,17 +246,70 @@ export default function EmergencyAlerts() {
   };
 
   // Calculate stats
+  const activeReports = emergencyReports.filter((r) => !isResolvedStatus(r.status));
+  const resolvedReports = emergencyReports.filter((r) => isResolvedStatus(r.status));
+  const activeTotalPages = Math.max(1, Math.ceil(activeReports.length / ACTIVE_PER_PAGE));
+  const activeSafePage = Math.min(activePage, activeTotalPages);
+  const paginatedActiveReports = activeReports.slice((activeSafePage - 1) * ACTIVE_PER_PAGE, activeSafePage * ACTIVE_PER_PAGE);
+  const resolvedSearchTerm = resolvedSearch
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  const filteredResolvedReports = resolvedReports.filter((r) => {
+    if (!resolvedSearchTerm) return true;
+    return (
+      (r.senderName || r.reportedBy || "").toLowerCase().includes(resolvedSearchTerm) ||
+      (r.type || "").toLowerCase().includes(resolvedSearchTerm) ||
+      (r.description || "").toLowerCase().includes(resolvedSearchTerm) ||
+      (r.location?.label || "").toLowerCase().includes(resolvedSearchTerm) ||
+      (r.id || "").toLowerCase().includes(resolvedSearchTerm)
+    );
+  });
+  const resolvedTotalPages = Math.max(1, Math.ceil(filteredResolvedReports.length / RESOLVED_PER_PAGE));
+  const resolvedSafePage = Math.min(resolvedPage, resolvedTotalPages);
+  const paginatedResolvedReports = filteredResolvedReports.slice((resolvedSafePage - 1) * RESOLVED_PER_PAGE, resolvedSafePage * RESOLVED_PER_PAGE);
   const stats = {
     totalEmergencies: emergencyReports.length,
-    activeEmergencies: emergencyReports.filter(r => r.status !== 'resolved').length,
-    resolvedEmergencies: emergencyReports.filter(r => r.status === 'resolved').length,
+    activeEmergencies: activeReports.length,
+    resolvedEmergencies: resolvedReports.length,
   };
   
   // Count unseen reports
-  const unseenCount = emergencyReports.filter(report => report.id && !seenReportIds.has(report.id) && report.status !== 'resolved').length;
+  const unseenCount = emergencyReports.filter(report => report.id && !seenReportIds.has(report.id) && !isResolvedStatus(report.status)).length;
+
+  useEffect(() => {
+    if (activePage > activeTotalPages) {
+      setActivePage(activeTotalPages);
+    }
+  }, [activePage, activeTotalPages]);
+
+  useEffect(() => {
+    if (resolvedPage > resolvedTotalPages) {
+      setResolvedPage(resolvedTotalPages);
+    }
+  }, [resolvedPage, resolvedTotalPages]);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+        <div className="text-center">
+          <span className="material-symbols-outlined animate-spin text-blue-400" style={{ fontSize: "3rem" }}>
+            progress_activity
+          </span>
+          <p className="mt-4 text-slate-300 font-medium tracking-wide">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    router.push("/login");
+    return null;
+  }
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
+    <div className="flex min-h-screen bg-gradient-to-br from-slate-100 to-slate-200">
       {/* Emergency Detail Modal - Show when emergency report is clicked */}
       {selectedReport && (
         <TICEmergencyModal
@@ -278,7 +321,7 @@ export default function EmergencyAlerts() {
           location={selectedReport.location}
           description={selectedReport.description}
           imageUrl={selectedReport.imageUrl}
-          isResolved={selectedReport.status === 'resolved'}
+          isResolved={isResolvedStatus(selectedReport.status)}
         />
       )}
 
@@ -360,7 +403,7 @@ export default function EmergencyAlerts() {
       </div>
 
       {/* Main Content */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-visible">
         {/* Header */}
         <header className="border-b border-slate-200 bg-white/80 backdrop-blur-sm px-6 py-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -384,7 +427,7 @@ export default function EmergencyAlerts() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-auto p-6 flex flex-col gap-6">
+        <main className="flex-1 p-6 flex flex-col gap-6">
           {/* New Emergency Alert Banner */}
           {unseenCount > 0 && (
             <div className="bg-gradient-to-r from-yellow-500 to-orange-500 rounded-2xl p-4 shadow-xl text-white border-4 border-yellow-300 animate-pulse">
@@ -400,7 +443,12 @@ export default function EmergencyAlerts() {
                 </div>
                 <div className="flex-shrink-0">
                   <button 
-                    onClick={() => unseenCount > 0 && handleReportClick(emergencyReports.find(r => !seenReportIds.has(r.id))!)}
+                    onClick={() => {
+                      const nextUnseen = emergencyReports.find((r) => r.id && !seenReportIds.has(r.id) && !isResolvedStatus(r.status));
+                      if (nextUnseen) {
+                        handleReportClick(nextUnseen);
+                      }
+                    }}
                     className="px-6 py-3 bg-white text-orange-600 font-bold rounded-xl hover:bg-yellow-50 transition-all shadow-lg"
                   >
                     View Now
@@ -481,11 +529,11 @@ export default function EmergencyAlerts() {
                   <h2 className="text-lg font-bold text-slate-900">Emergency Reports</h2>
                 </div>
                 <div className="text-xs text-slate-500 font-medium">
-                  {emergencyReports.length} {emergencyReports.length === 1 ? 'report' : 'reports'}
+                  {activeReports.length} {activeReports.length === 1 ? 'report' : 'reports'}
                 </div>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto custom-scrollbar">
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-slate-50 to-slate-100 border-b-2 border-slate-200">
                   <tr>
@@ -500,7 +548,7 @@ export default function EmergencyAlerts() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {emergencyReports.filter(r => r.status !== 'resolved').length === 0 ? (
+                  {activeReports.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="px-6 py-12 text-center">
                         <div className="flex flex-col items-center justify-center text-slate-400">
@@ -511,14 +559,14 @@ export default function EmergencyAlerts() {
                       </td>
                     </tr>
                   ) : (
-                    emergencyReports.filter(r => r.status !== 'resolved').map((report, index) => {
+                    paginatedActiveReports.map((report, index) => {
                       const isNew = !seenReportIds.has(report.id);
                       return (
                         <tr 
                           key={report.id || `report-${index}`} 
                           className={`hover:bg-red-50/50 transition-colors ${isNew ? 'bg-yellow-50/50 border-l-4 border-yellow-500' : ''}`}
                         >
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <div className="flex items-center gap-2">
                             {isNew && (
                               <span className="flex items-center gap-1 px-2 py-0.5 bg-yellow-500 text-white text-xs font-black rounded-full animate-pulse">
@@ -535,7 +583,7 @@ export default function EmergencyAlerts() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <div className="flex items-center gap-2">
                             <span className="material-symbols-outlined text-blue-600" style={{ fontSize: "1.25rem" }}>
                               person
@@ -543,27 +591,27 @@ export default function EmergencyAlerts() {
                             <span className="text-sm font-semibold text-slate-900">{report.senderName || report.reportedBy || "Unknown"}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-rose-100 text-rose-700 border-rose-300">
                             {report.type || "EMERGENCY"}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase ${
-                            report.status === 'resolved' 
+                            isResolvedStatus(report.status)
                               ? 'bg-green-100 text-green-700 border-green-300'
                               : 'bg-red-100 text-red-700 border-red-300 animate-pulse'
                           }`}>
-                            {report.status !== 'resolved' && <span className="mr-1.5 h-2 w-2 rounded-full bg-red-500"></span>}
-                            {report.status === 'resolved' ? 'RESOLVED' : (report.status || "ACTIVE").toUpperCase()}
+                            {!isResolvedStatus(report.status) && <span className="mr-1.5 h-2 w-2 rounded-full bg-red-500"></span>}
+                            {isResolvedStatus(report.status) ? 'RESOLVED' : (report.status || "ACTIVE").toUpperCase()}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <div className="max-w-xs">
                             <span className="text-xs text-slate-600 line-clamp-2">{report.description || "No description provided"}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <div className="flex items-start gap-1.5 max-w-xs">
                             <span className="material-symbols-outlined text-red-500 flex-shrink-0" style={{ fontSize: "1rem" }}>
                               location_on
@@ -571,17 +619,19 @@ export default function EmergencyAlerts() {
                             <div className="flex flex-col">
                               <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
                               <span className="text-xs text-slate-400 mt-0.5">
-                                {report.location?.lat.toFixed(4)}°, {report.location?.lng.toFixed(4)}°
+                                {report.location?.lat != null && report.location?.lng != null
+                                  ? `${report.location.lat.toFixed(4)}°, ${report.location.lng.toFixed(4)}°`
+                                  : "Coordinates unavailable"}
                               </span>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <span className="text-xs font-medium text-slate-700">
                             {getTimeElapsed(report.timestamp)}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-3">
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => handleReportClick(report)}
@@ -590,7 +640,7 @@ export default function EmergencyAlerts() {
                               <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chat</span>
                               Respond
                             </button>
-                            {report.status !== 'resolved' && report.id && (
+                            {!isResolvedStatus(report.status) && report.id && (
                               <button
                                 onClick={(e) => {
                                   console.log("🔘 Resolve button clicked for report:", report.id, "Type:", typeof report.id);
@@ -615,26 +665,47 @@ export default function EmergencyAlerts() {
                 </tbody>
               </table>
             </div>
+
+            {activeReports.length > 0 && (
+              <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+                <p className="text-xs text-slate-500 font-medium">
+                  Showing {(activeSafePage - 1) * ACTIVE_PER_PAGE + 1}–{Math.min(activeSafePage * ACTIVE_PER_PAGE, activeReports.length)} of {activeReports.length}
+                </p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setActivePage((p) => Math.max(1, p - 1))}
+                    disabled={activeSafePage === 1}
+                    className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chevron_left</span>
+                  </button>
+                  {Array.from({ length: activeTotalPages }, (_, i) => i + 1).map((page) => (
+                    <button
+                      key={page}
+                      onClick={() => setActivePage(page)}
+                      className={`flex items-center justify-center w-8 h-8 rounded-lg border text-xs font-bold transition-colors ${
+                        page === activeSafePage
+                          ? 'bg-red-600 border-red-600 text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setActivePage((p) => Math.min(activeTotalPages, p + 1))}
+                    disabled={activeSafePage === activeTotalPages}
+                    className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chevron_right</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Resolved Emergency Reports Table */}
           {stats.resolvedEmergencies > 0 && (() => {
-            const allResolved = emergencyReports.filter(r => r.status === 'resolved');
-            const filtered = allResolved.filter(r => {
-              const term = resolvedSearch.toLowerCase();
-              if (!term) return true;
-              return (
-                (r.senderName || r.reportedBy || '').toLowerCase().includes(term) ||
-                (r.type || '').toLowerCase().includes(term) ||
-                (r.description || '').toLowerCase().includes(term) ||
-                (r.location?.label || '').toLowerCase().includes(term) ||
-                (r.id || '').toLowerCase().includes(term)
-              );
-            });
-            const totalPages = Math.max(1, Math.ceil(filtered.length / RESOLVED_PER_PAGE));
-            const safePage = Math.min(resolvedPage, totalPages);
-            const paginated = filtered.slice((safePage - 1) * RESOLVED_PER_PAGE, safePage * RESOLVED_PER_PAGE);
-
             return (
               <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-green-50 to-emerald-50">
@@ -656,12 +727,12 @@ export default function EmergencyAlerts() {
                         />
                       </div>
                       <div className="text-xs text-slate-500 font-medium">
-                        {filtered.length} {filtered.length === 1 ? 'report' : 'reports'}
+                        {filteredResolvedReports.length} {filteredResolvedReports.length === 1 ? 'report' : 'reports'}
                       </div>
                     </div>
                   </div>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto custom-scrollbar">
                   <table className="w-full">
                     <thead className="bg-gradient-to-r from-slate-50 to-slate-100 border-b-2 border-slate-200">
                       <tr>
@@ -676,7 +747,7 @@ export default function EmergencyAlerts() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {paginated.length === 0 ? (
+                      {paginatedResolvedReports.length === 0 ? (
                         <tr>
                           <td colSpan={8} className="px-6 py-10 text-center">
                             <div className="flex flex-col items-center justify-center text-slate-400">
@@ -686,12 +757,12 @@ export default function EmergencyAlerts() {
                           </td>
                         </tr>
                       ) : (
-                        paginated.map((report, index) => (
+                        paginatedResolvedReports.map((report, index) => (
                           <tr
                             key={report.id || `resolved-report-${index}`}
                             className="hover:bg-green-50/50 transition-colors"
                           >
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <div className="flex flex-col">
                                 <span className="font-mono text-xs font-bold text-slate-500">
                                   #{report.id ? report.id.slice(-6).toUpperCase() : 'N/A'}
@@ -701,43 +772,45 @@ export default function EmergencyAlerts() {
                                 </span>
                               </div>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <div className="flex items-center gap-2">
                                 <span className="material-symbols-outlined text-blue-600" style={{ fontSize: "1.25rem" }}>person</span>
                                 <span className="text-sm font-semibold text-slate-900">{report.senderName || report.reportedBy || "Unknown"}</span>
                               </div>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-rose-100 text-rose-700 border-rose-300">
                                 {report.type || "EMERGENCY"}
                               </span>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <span className="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase bg-green-100 text-green-700 border-green-300">
                                 <span className="mr-1.5 h-2 w-2 rounded-full bg-green-500"></span>
                                 RESOLVED
                               </span>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <div className="max-w-xs">
                                 <span className="text-xs text-slate-600 line-clamp-2">{report.description || "No description provided"}</span>
                               </div>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <div className="flex items-start gap-1.5 max-w-xs">
                                 <span className="material-symbols-outlined text-green-500 flex-shrink-0" style={{ fontSize: "1rem" }}>location_on</span>
                                 <div className="flex flex-col">
                                   <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
                                   <span className="text-xs text-slate-400 mt-0.5">
-                                    {report.location?.lat.toFixed(4)}°, {report.location?.lng.toFixed(4)}°
+                                    {report.location?.lat != null && report.location?.lng != null
+                                      ? `${report.location.lat.toFixed(4)}°, ${report.location.lng.toFixed(4)}°`
+                                      : "Coordinates unavailable"}
                                   </span>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <span className="text-xs font-medium text-slate-700">{getTimeElapsed(report.timestamp)}</span>
                             </td>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3">
                               <button
                                 onClick={() => handleReportClick(report)}
                                 className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100 transition-colors border border-green-200 hover:border-green-300"
@@ -753,25 +826,25 @@ export default function EmergencyAlerts() {
                   </table>
                 </div>
                 {/* Pagination */}
-                {totalPages > 1 && (
+                {filteredResolvedReports.length > 0 && (
                   <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
                     <p className="text-xs text-slate-500 font-medium">
-                      Showing {(safePage - 1) * RESOLVED_PER_PAGE + 1}–{Math.min(safePage * RESOLVED_PER_PAGE, filtered.length)} of {filtered.length}
+                      Showing {(resolvedSafePage - 1) * RESOLVED_PER_PAGE + 1}–{Math.min(resolvedSafePage * RESOLVED_PER_PAGE, filteredResolvedReports.length)} of {filteredResolvedReports.length}
                     </p>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => setResolvedPage(p => Math.max(1, p - 1))}
-                        disabled={safePage === 1}
+                        disabled={resolvedSafePage === 1}
                         className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chevron_left</span>
                       </button>
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                      {Array.from({ length: resolvedTotalPages }, (_, i) => i + 1).map(page => (
                         <button
                           key={page}
                           onClick={() => setResolvedPage(page)}
                           className={`flex items-center justify-center w-8 h-8 rounded-lg border text-xs font-bold transition-colors ${
-                            page === safePage
+                            page === resolvedSafePage
                               ? 'bg-green-600 border-green-600 text-white'
                               : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
                           }`}
@@ -780,8 +853,8 @@ export default function EmergencyAlerts() {
                         </button>
                       ))}
                       <button
-                        onClick={() => setResolvedPage(p => Math.min(totalPages, p + 1))}
-                        disabled={safePage === totalPages}
+                        onClick={() => setResolvedPage(p => Math.min(resolvedTotalPages, p + 1))}
+                        disabled={resolvedSafePage === resolvedTotalPages}
                         className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chevron_right</span>

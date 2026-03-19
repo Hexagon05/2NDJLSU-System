@@ -21,7 +21,9 @@ interface Dispatch {
     personnels: string;
     truck: string;
     status: string;
-    location: { lat: number; lng: number; label: string };
+    location?: { lat: number; lng: number; label: string };
+    startLocation?: { lat: number; lng: number; label: string };
+    deliveryLocation?: { lat: number; lng: number; label: string };
     supplies: { category: string; item: string; quantity: number }[];
     othersNote?: string;
     createdAt: Timestamp | null;
@@ -52,12 +54,15 @@ const STATUS_STYLES: Record<string, string> = {
     Ongoing: "bg-orange-100 text-orange-700 border-orange-200",
     Delivered: "bg-cyan-100 text-cyan-700 border-cyan-200",
     Completed: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    Cancelled: "bg-rose-100 text-rose-700 border-rose-200",
 };
 
 export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Props) {
     const [completing, setCompleting] = useState(false);
+    const [canceling, setCanceling] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [showCancelConfirmModal, setShowCancelConfirmModal] = useState(false);
 
     // Mark dispatch as delivered/completed
     const handleCompleteDelivery = async () => {
@@ -89,6 +94,34 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         }
     };
 
+    const handleCancelDispatch = async () => {
+        if (!dispatch.id) {
+            return;
+        }
+
+        setShowCancelConfirmModal(true);
+    };
+
+    const confirmCancelDispatch = async () => {
+        setShowCancelConfirmModal(false);
+        setCanceling(true);
+        try {
+            const dispatchRef = doc(db, "dispatches", dispatch.id);
+            await updateDoc(dispatchRef, {
+                status: "Cancelled",
+                cancelledAt: Timestamp.now(),
+            });
+
+            onSuccess?.();
+            onClose();
+        } catch (error: any) {
+            console.error("Error cancelling dispatch:", error);
+            alert(`Failed to cancel dispatch: ${error?.message || "Unknown error"}`);
+        } finally {
+            setCanceling(false);
+        }
+    };
+
     const handleSuccessClose = () => {
         setShowSuccessModal(false);
         onClose(); // Close main modal
@@ -96,6 +129,8 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
     // Check if dispatch can be completed (must be in progress or en route)
     const canComplete = ["En Route", "Ongoing", "Approved"].includes(dispatch.status);
+    const canCancel = ["Pending", "Approved", "En Route", "Ongoing"].includes(dispatch.status);
+    const deliveryLocation = dispatch.deliveryLocation || dispatch.location;
 
     return (
         <>
@@ -156,6 +191,39 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 </div>
             )}
 
+            {/* Cancel Confirmation Modal */}
+            {showCancelConfirmModal && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onClick={() => setShowCancelConfirmModal(false)} />
+                    <div className="relative bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full animate-fade-in">
+                        <div className="text-center">
+                            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-rose-100 mb-4">
+                                <span className="material-symbols-outlined text-rose-600 text-3xl">warning</span>
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-2">Cancel This Dispatch?</h3>
+                            <p className="text-sm text-slate-600 mb-6">
+                                This will update the dispatch status to 'Cancelled' and stop this request from being processed.
+                            </p>
+                            <div className="flex gap-3 justify-center">
+                                <button
+                                    onClick={() => setShowCancelConfirmModal(false)}
+                                    className="px-6 py-2.5 rounded-xl bg-slate-200 text-slate-700 font-bold text-sm hover:bg-slate-300 transition-all"
+                                >
+                                    Keep Dispatch
+                                </button>
+                                <button
+                                    onClick={confirmCancelDispatch}
+                                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-bold text-sm hover:from-rose-600 hover:to-red-700 transition-all flex items-center gap-2"
+                                >
+                                    <span className="material-symbols-outlined text-sm">cancel</span>
+                                    Confirm Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Main Modal */}
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
@@ -201,15 +269,15 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         {/* Interactive Map Box */}
                         <div className="w-full lg:w-[400px] h-[300px] flex-shrink-0 relative rounded-3xl overflow-hidden border border-slate-200 shadow-lg bg-slate-50 group">
                             <LeafletMap
-                                lat={dispatch.location?.lat || 0}
-                                lng={dispatch.location?.lng || 0}
+                                lat={deliveryLocation?.lat || 0}
+                                lng={deliveryLocation?.lng || 0}
                             />
                             <div className="absolute top-4 left-4 z-[1000] bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-lg border border-slate-200 flex items-center gap-2">
                                 <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse-slow" />
                                 <span className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">Target Location</span>
                             </div>
                             <div className="absolute bottom-4 left-4 z-[1000] bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-[9px] font-mono text-white border border-white/20">
-                                {dispatch.location?.lat.toFixed(6)}, {dispatch.location?.lng.toFixed(6)}
+                                {deliveryLocation?.lat?.toFixed(6) ?? "0.000000"}, {deliveryLocation?.lng?.toFixed(6) ?? "0.000000"}
                             </div>
                         </div>
 
@@ -222,7 +290,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                 </div>
                                 <div className="p-6 rounded-3xl bg-emerald-50/50 border border-emerald-100 shadow-sm relative overflow-hidden">
                                     <div className="relative z-10">
-                                        <p className="text-2xl font-black text-slate-900 leading-tight">{dispatch.location?.label || "Coordinate Point Established"}</p>
+                                        <p className="text-2xl font-black text-slate-900 leading-tight">{deliveryLocation?.label || "Coordinate Point Established"}</p>
                                         <p className="text-sm text-emerald-700 font-medium mt-2 flex items-center gap-2">
                                             <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>explore</span>
                                             Verified Strategic Landmark
@@ -319,6 +387,25 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         )}
                     </div>
                     <div className="flex gap-3">
+                        {canCancel && (
+                            <button
+                                onClick={handleCancelDispatch}
+                                disabled={canceling || completing}
+                                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-bold text-sm shadow-lg hover:from-rose-600 hover:to-red-700 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {canceling ? (
+                                    <>
+                                        <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                                        Cancelling...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="material-symbols-outlined text-sm">cancel</span>
+                                        Cancel Dispatch
+                                    </>
+                                )}
+                            </button>
+                        )}
                         {canComplete && (
                             <button
                                 onClick={handleCompleteDelivery}
