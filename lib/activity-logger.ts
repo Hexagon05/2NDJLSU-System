@@ -6,8 +6,10 @@ const LOCAL_ACTIVITY_KEY = "admin_activities_fallback_v1";
 export type ActivityType = 
   | "PERSONNEL_CREATED"
   | "PERSONNEL_UPDATED"
+  | "PERSONNEL_ARCHIVED"
   | "VEHICLE_CREATED"
   | "VEHICLE_UPDATED"
+  | "VEHICLE_ARCHIVED"
   | "DISPATCH_CREATED"
   | "DISPATCH_COMPLETED"
   | "EXPORT_EXCEL"
@@ -123,8 +125,10 @@ export const getActivityIcon = (type: ActivityType): string => {
   const iconMap: Record<ActivityType, string> = {
     PERSONNEL_CREATED: "person_add",
     PERSONNEL_UPDATED: "person_edit",
+    PERSONNEL_ARCHIVED: "archive",
     VEHICLE_CREATED: "local_shipping",
     VEHICLE_UPDATED: "edit",
+    VEHICLE_ARCHIVED: "inventory_2",
     DISPATCH_CREATED: "send",
     DISPATCH_COMPLETED: "task_alt",
     EXPORT_EXCEL: "download",
@@ -138,8 +142,10 @@ export const getActivityColor = (type: ActivityType): string => {
   const colorMap: Record<ActivityType, string> = {
     PERSONNEL_CREATED: "text-blue-600",
     PERSONNEL_UPDATED: "text-blue-500",
+    PERSONNEL_ARCHIVED: "text-rose-600",
     VEHICLE_CREATED: "text-violet-600",
     VEHICLE_UPDATED: "text-violet-500",
+    VEHICLE_ARCHIVED: "text-amber-700",
     DISPATCH_CREATED: "text-emerald-600",
     DISPATCH_COMPLETED: "text-green-600",
     EXPORT_EXCEL: "text-amber-600",

@@ -14,6 +14,8 @@ import {
     query,
     doc,
     updateDoc,
+    setDoc,
+    deleteDoc,
 } from "firebase/firestore";
 import { hashPassword } from "@/lib/password-utils";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
@@ -79,6 +81,8 @@ export default function PersonnelsPage() {
     const [uploadingImage, setUploadingImage] = useState(false);
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string>("");
+    const [archivingPersonnel, setArchivingPersonnel] = useState(false);
+    const [archiveConfirmationOpen, setArchiveConfirmationOpen] = useState(false);
 
     const today = new Date().toISOString().split("T")[0];
 
@@ -430,6 +434,78 @@ export default function PersonnelsPage() {
         if (selectedPersonnel) {
             setSelectedPersonnel({ ...selectedPersonnel, [field]: value });
         }
+    };
+
+    const handleArchivePersonnel = async () => {
+        if (!selectedPersonnel?.id || archivingPersonnel || savingEdit) return;
+
+        setArchivingPersonnel(true);
+        setErrorMsg("");
+
+        try {
+            const personnelSnapshot = { ...selectedPersonnel };
+            const personnelId = personnelSnapshot.id;
+            const { id, ...personnelData } = personnelSnapshot;
+
+            await withTimeout(
+                setDoc(doc(db, "archive_personnel", personnelId), {
+                    ...personnelData,
+                    originalPersonnelId: personnelId,
+                    archivedAt: Timestamp.now(),
+                    archivedBy: user?.email || "unknown",
+                }),
+                20000,
+                "Archive request timed out. Please try again."
+            );
+
+            await withTimeout(
+                deleteDoc(doc(db, "personnelAccount", personnelId)),
+                20000,
+                "Archive cleanup timed out. Please try again."
+            );
+
+            setArchiveConfirmationOpen(false);
+            setPersonnels((prev) => prev.filter((personnel) => personnel.id !== personnelId));
+            setDetailsModalOpen(false);
+            setEditModalOpen(false);
+            setSelectedPersonnel(null);
+            setOriginalPersonnel(null);
+            setImageFile(null);
+            setImagePreview("");
+
+            setSuccessMsg("Personnel archived successfully.");
+            setTimeout(() => setSuccessMsg(""), 3500);
+
+            if (user?.email) {
+                await logActivity(
+                    "PERSONNEL_ARCHIVED",
+                    `Archived personnel: ${personnelSnapshot.firstName} ${personnelSnapshot.lastName}`,
+                    user.email,
+                    {
+                        personnelId,
+                        firstName: personnelSnapshot.firstName,
+                        lastName: personnelSnapshot.lastName,
+                        rank: personnelSnapshot.rank,
+                        position: personnelSnapshot.position,
+                    }
+                );
+            }
+        } catch (error: any) {
+            console.error("Error archiving personnel:", error);
+            const message = String(error?.message || "");
+            if (message.toLowerCase().includes("permission") || message.toLowerCase().includes("insufficient")) {
+                setErrorMsg("Permission denied while archiving personnel. Please check Firestore rules/admin setup.");
+            } else {
+                setErrorMsg(message || "Failed to archive personnel. Please try again.");
+            }
+        } finally {
+            setArchivingPersonnel(false);
+        }
+    };
+
+    const handleArchiveClick = () => {
+        if (!selectedPersonnel?.id || archivingPersonnel || savingEdit) return;
+        setArchiveConfirmationOpen(true);
     };
 
     // ── filter ──────────────────────────────────────────────────────
@@ -1260,6 +1336,12 @@ export default function PersonnelsPage() {
                             </button>
                         </div>
                         <div className="p-6">
+                            {errorMsg && (
+                                <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700 text-sm">
+                                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>error</span>
+                                    <span>{errorMsg}</span>
+                                </div>
+                            )}
                             <div className="grid grid-cols-12 gap-6">
                                 {/* Profile Image Section - Left side */}
                                 <div className="col-span-4 flex flex-col items-center">
@@ -1334,6 +1416,15 @@ export default function PersonnelsPage() {
                         <div className="flex justify-end gap-3 p-6 border-t border-slate-100 bg-slate-50">
                             <button
                                 type="button"
+                                onClick={handleArchiveClick}
+                                disabled={archivingPersonnel || savingEdit}
+                                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 py-2.5 px-6 text-sm font-bold text-white shadow-lg shadow-rose-500/30 hover:shadow-xl active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>archive</span>
+                                {archivingPersonnel ? "Archiving..." : "Archive"}
+                            </button>
+                            <button
+                                type="button"
                                 onClick={() => setDetailsModalOpen(false)}
                                 className="rounded-xl border-2 border-slate-200 py-2.5 px-6 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-all"
                             >
@@ -1351,6 +1442,53 @@ export default function PersonnelsPage() {
                                 <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>edit</span>
                                 Edit Personnel
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Archive Confirmation Modal ── */}
+            {archiveConfirmationOpen && selectedPersonnel && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+                        onClick={() => {
+                            if (!archivingPersonnel) setArchiveConfirmationOpen(false);
+                        }}
+                    />
+                    <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden border border-rose-200">
+                        <div className="bg-gradient-to-r from-rose-700 to-rose-800 px-6 py-4">
+                            <div className="flex items-center gap-3">
+                                <span className="material-symbols-outlined text-rose-100" style={{ fontSize: "1.4rem" }}>
+                                    archive
+                                </span>
+                                <h3 className="text-base font-bold text-white">Confirm Archive</h3>
+                            </div>
+                        </div>
+                        <div className="p-6">
+                            <p className="text-sm text-slate-700">
+                                Archive {selectedPersonnel.firstName} {selectedPersonnel.lastName}? This will remove this personnel from the active personnel list.
+                            </p>
+                            {errorMsg && (
+                                <p className="mt-3 text-xs text-rose-700 font-medium">{errorMsg}</p>
+                            )}
+                            <div className="mt-5 flex justify-end gap-3">
+                                <button
+                                    onClick={() => setArchiveConfirmationOpen(false)}
+                                    disabled={archivingPersonnel}
+                                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleArchivePersonnel}
+                                    disabled={archivingPersonnel}
+                                    className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>archive</span>
+                                    {archivingPersonnel ? "Archiving..." : "Archive"}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

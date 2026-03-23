@@ -25,28 +25,17 @@ const LeafletMap = dynamic<{ lat: number; lng: number; onChange: (lat: number, l
     }
 );
 
-// ── Supply catalogue ─────────────────────────────────────────────────────────
-const SUPPLY_CATALOGUE: { category: string; items: string[] }[] = [
-    {
-        category: "Medic",
-        items: ["Biogesic", "Syringe", "Mefenamic", "Bandages"],
-    },
-    {
-        category: "Ammunition",
-        items: ["7.62", "5.56", "9mm", ".45"],
-    },
-    {
-        category: "Beverages",
-        items: ["Energy Drink", "Water"],
-    },
-    {
-        category: "Food",
-        items: ["Can Foods", "Noodles", "Rice"],
-    },
-];
+interface Supply {
+    category: string;
+    item: string;
+    quantity: number;
+}
 
-interface SupplyQty {
-    [key: string]: number; // "Medic|Biogesic" => 3
+interface RequisitionOption {
+    id: string;
+    requisitionNumber: string;
+    requestedByName?: string;
+    embeddedSupplies: Supply[];
 }
 
 interface Props {
@@ -54,10 +43,7 @@ interface Props {
     onSuccess: () => void;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function supplyKey(category: string, item: string) {
-    return `${category}|${item}`;
-}
+
 
 export default function DispatchModal({ onClose, onSuccess }: Props) {
     const { user } = useAuth();
@@ -73,9 +59,10 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const [personnels, setPersonnels] = useState("");
     const [personnelIncluded, setPersonnelIncluded] = useState("");
     const [truck, setTruck] = useState("");
-    const [supplyQty, setSupplyQty] = useState<SupplyQty>({});
+    const [requisitionNumber, setRequisitionNumber] = useState("");
+    const [fetchedSupplies, setFetchedSupplies] = useState<Supply[]>([]);
+    const [loadingSupplies, setLoadingSupplies] = useState(false);
     const [othersNote, setOthersNote] = useState("");
-    const [activeCategory, setActiveCategory] = useState("Medic");
     
     // Blowbagets Checklist Items
     const [blowbagetsChecklist, setBlowbagetsChecklist] = useState({
@@ -98,6 +85,8 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     // DB Data
     const [dbVehicles, setDbVehicles] = useState<{ id: string; codename: string; plate: string }[]>([]);
     const [dbPersonnels, setDbPersonnels] = useState<{ id: string; name: string }[]>([]);
+    const [approvedRequisitions, setApprovedRequisitions] = useState<RequisitionOption[]>([]);
+    const [loadingRequisitions, setLoadingRequisitions] = useState(false);
 
     // Computed: All blowbagets checked
     const hasBlowbagets = Object.values(blowbagetsChecklist).every(checked => checked);
@@ -107,55 +96,234 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
         setBlowbagetsChecklist(prev => ({ ...prev, [item]: !prev[item] }));
     };
 
+    // Check all blowbagets items
+    const checkAllBlowbagets = () => {
+        setBlowbagetsChecklist({
+            battery: true,
+            lights: true,
+            oil: true,
+            water: true,
+            brakes: true,
+            air: true,
+            gas: true,
+            engine: true,
+            tires: true,
+            self: true,
+        });
+    };
+
+    // Normalize mixed item payloads into dispatch supply format
+    const normalizeSupplies = (rawItems: any[]): Supply[] => {
+        return rawItems
+            .map((entry: any) => {
+                const itemName =
+                    entry?.item ||
+                    entry?.itemName ||
+                    entry?.name ||
+                    entry?.description ||
+                    entry?.productName ||
+                    entry?.itemDescription ||
+                    "";
+
+                const qtyRaw =
+                    entry?.quantity ??
+                    entry?.qty ??
+                    entry?.requestedQty ??
+                    entry?.approvedQty ??
+                    entry?.releasedQty ??
+                    entry?.releaseQty ??
+                    entry?.issuedQty ??
+                    entry?.count ??
+                    0;
+
+                const quantity = Number(qtyRaw) || 0;
+
+                return {
+                    category:
+                        entry?.category ||
+                        entry?.supplyClass ||
+                        entry?.supply_class ||
+                        entry?.classification ||
+                        entry?.type ||
+                        "Uncategorized",
+                    item: String(itemName).trim(),
+                    quantity,
+                };
+            })
+            .filter((s) => s.item.length > 0);
+    };
+
+    // Fetch released requisitions from Firestore
+    const fetchApprovedRequisitionsInitial = async () => {
+        setLoadingRequisitions(true);
+        try {
+            const requisitionSnap = await getDocs(collection(db, "requisitions"));
+
+            const requisitionList = requisitionSnap.docs
+                .map(d => {
+                    const data = d.data() as any;
+                    const rawStatus =
+                        data.status ||
+                        data.requisitionStatus ||
+                        data.currentStatus ||
+                        data.workflowStatus ||
+                        data.approvalStatus ||
+                        data.approval?.status ||
+                        "";
+
+                    const normalizedStatus = String(rawStatus).trim().toLowerCase().replace(/[_-]+/g, " ");
+                    const isReleased = normalizedStatus === "released" || normalizedStatus === "for release" || !!data.releasedAt;
+
+                    const embeddedLists = [
+                        data.items,
+                        data.supplies,
+                        data.requisitionItems,
+                        data.requestItems,
+                        data.lineItems,
+                        data.inventoryItems,
+                    ].filter(Array.isArray) as any[][];
+
+                    const embeddedSupplies = normalizeSupplies(embeddedLists.flat());
+
+                    return {
+                        id: d.id,
+                        isReleased,
+                        requisitionNumber:
+                            data.requisitionNumber ||
+                            data.requisitionNo ||
+                            data.requestNumber ||
+                            data.requisitionId ||
+                            data.poNumber ||
+                            d.id,
+                        requestedByName:
+                            data.requestedByName ||
+                            data.requestorName ||
+                            data.createdByName ||
+                            data.requestedBy ||
+                            "",
+                        embeddedSupplies,
+                    };
+                })
+                .filter((r) => r.isReleased)
+                    .map(({ id, requisitionNumber, requestedByName, embeddedSupplies }) => ({ id, requisitionNumber, requestedByName, embeddedSupplies }));
+
+            setApprovedRequisitions(requisitionList);
+        } catch (err) {
+            console.error("Error fetching released requisitions:", err);
+            setApprovedRequisitions([]);
+            setError("Unable to load released requisitions. Please check Firestore permissions for requisitions.");
+        } finally {
+            setLoadingRequisitions(false);
+        }
+    };
+
+    // Handle requisition selection and auto-fetch supplies
+    const handleRequisitionChange = (selectedRequisition: RequisitionOption) => {
+        setRequisitionNumber(selectedRequisition.requisitionNumber);
+        if (selectedRequisition.requisitionNumber) {
+            fetchSuppliesFromRequisition(selectedRequisition);
+        } else {
+            setFetchedSupplies([]);
+        }
+    };
+
+    // Fetch supplies from requisition (document items, subcollection items, then items collection fallback)
+    const fetchSuppliesFromRequisition = async (selectedRequisition: RequisitionOption) => {
+        if (!selectedRequisition.requisitionNumber.trim()) {
+            setFetchedSupplies([]);
+            return;
+        }
+
+        setLoadingSupplies(true);
+        try {
+            // 1) Prefer items already embedded in requisition doc
+            if (selectedRequisition.embeddedSupplies.length > 0) {
+                setFetchedSupplies(selectedRequisition.embeddedSupplies);
+                setError("");
+                return;
+            }
+
+            // 2) Fallback: requisitions/{id}/items subcollection
+            const subItemsSnap = await getDocs(collection(db, "requisitions", selectedRequisition.id, "items"));
+            const subSupplies = normalizeSupplies(subItemsSnap.docs.map((d) => d.data()));
+            if (subSupplies.length > 0) {
+                setFetchedSupplies(subSupplies);
+                setError("");
+                return;
+            }
+
+            // 3) Last fallback: filter from global items collection by requisition number
+            const itemsSnap = await getDocs(query(collection(db, "items"), orderBy("name", "asc")));
+            const items = itemsSnap.docs.map(doc => doc.data());
+
+            const requisitionSupplies = normalizeSupplies(
+                items
+                .filter((item: any) =>
+                    item.requisitionNumber === selectedRequisition.requisitionNumber ||
+                    item.requisitionNo === selectedRequisition.requisitionNumber ||
+                    item.requisition === selectedRequisition.requisitionNumber ||
+                    item.requestNumber === selectedRequisition.requisitionNumber ||
+                    item.poNumber === selectedRequisition.requisitionNumber ||
+                    item.po === selectedRequisition.requisitionNumber
+                )
+            );
+
+            setFetchedSupplies(requisitionSupplies);
+            setError("");
+        } catch (err) {
+            console.error("Error fetching supplies from requisition:", err);
+            setError("Failed to fetch supplies from requisition. Please select a valid requisition and try again.");
+            setFetchedSupplies([]);
+        } finally {
+            setLoadingSupplies(false);
+        }
+    };
+
     // Generate dispatch ID and fetch data
     useEffect(() => {
         const loadInitialData = async () => {
             try {
-                // 1. Generate ID
                 const counterRef = doc(db, "meta", "dispatchCounter");
                 const snap = await getDoc(counterRef);
                 const count = snap.exists() ? (snap.data().count as number) : 0;
                 const year = new Date().getFullYear();
                 setDispatchId(`${year}${String(count + 1).padStart(8, "0")}`);
+            } catch (err) {
+                console.error("Error loading dispatch counter:", err);
+            }
 
-                // 2. Fetch Vehicles
+            try {
                 const vSnap = await getDocs(query(collection(db, "vehicles"), orderBy("codename", "asc")));
                 const vData = vSnap.docs.map(d => ({
                     id: d.id,
                     codename: d.data().codename,
-                    plate: d.data().plate
+                    plate: d.data().plate,
                 }));
                 setDbVehicles(vData);
                 if (vData.length > 0) setTruck(vData[0].codename);
+            } catch (err) {
+                console.error("Error loading vehicles:", err);
+            }
 
-                // 3. Fetch Officers
+            try {
                 const oSnap = await getDocs(query(collection(db, "personnelAccount"), orderBy("lastName", "asc")));
                 setDbPersonnels(oSnap.docs.map(d => {
                     const data = d.data();
                     return {
                         id: d.id,
-                        name: `[${data.rank}] ${data.lastName}, ${data.firstName}`
+                        name: `[${data.rank}] ${data.lastName}, ${data.firstName}`,
                     };
                 }));
             } catch (err) {
-                console.error("Error loading data:", err);
+                console.error("Error loading personnels:", err);
             }
+
+            await fetchApprovedRequisitionsInitial();
         };
         loadInitialData();
     }, []);
 
-    // Supply qty helpers
-    const setQty = (category: string, item: string, qty: number) => {
-        setSupplyQty((prev) => ({
-            ...prev,
-            [supplyKey(category, item)]: Math.max(0, qty),
-        }));
-    };
 
-    const getQty = (category: string, item: string) =>
-        supplyQty[supplyKey(category, item)] ?? 0;
-
-    const activeSupplies = Object.entries(supplyQty).filter(([, v]) => v > 0);
 
     // Export blowbagets safety checklist as printable PDF
     const exportBlowbagets = () => {
@@ -667,10 +835,9 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     personnels: personnels.trim(),
                     personnelIncluded: personnelIncluded.trim(),
                     truck,
-                    supplies: activeSupplies.map(([key, qty]) => {
-                        const [cat, itm] = key.split("|");
-                        return { category: cat, item: itm, quantity: qty };
-                    }),
+                    supplies: fetchedSupplies,
+                    requisitionNumber: requisitionNumber.trim(),
+                    poNumber: requisitionNumber.trim(),
                     othersNote: othersNote.trim(),
                     blowbagetsChecklist,
                     hasBlowbagets,
@@ -690,7 +857,8 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                         officer: personnels.trim(),
                         truck,
                         location: deliveryLocationLabel || `${deliveryLat}, ${deliveryLng}`,
-                        suppliesCount: activeSupplies.length,
+                        suppliesCount: fetchedSupplies.length,
+                        requisitionNumber: requisitionNumber.trim(),
                     }
                 );
             }
@@ -908,14 +1076,24 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                                         <p className="text-[10px] text-slate-500">All items must be verified before dispatch</p>
                                                     </div>
                                                 </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={exportBlowbagets}
-                                                    className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-all shadow-sm hover:shadow-md flex items-center gap-1"
-                                                >
-                                                    <span className="material-symbols-outlined" style={{ fontSize: "0.9rem" }}>print</span>
-                                                    Print
-                                                </button>
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={checkAllBlowbagets}
+                                                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md flex items-center gap-1"
+                                                    >
+                                                        <span className="material-symbols-outlined" style={{ fontSize: "0.9rem" }}>done_all</span>
+                                                        Check All
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={exportBlowbagets}
+                                                        className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-all shadow-sm hover:shadow-md flex items-center gap-1"
+                                                    >
+                                                        <span className="material-symbols-outlined" style={{ fontSize: "0.9rem" }}>print</span>
+                                                        Print
+                                                    </button>
+                                                </div>
                                             </div>
                                             
                                             {/* Checklist Items Grid */}
@@ -1100,68 +1278,98 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                 </div>
                             </div>
 
-                            {/* Supplies - Full Width Below */}
+                            {/* Requisition Input - Auto-Fill Supplies */}
                             <div className="rounded-3xl border border-amber-200/50 overflow-hidden bg-gradient-to-br from-white to-amber-50/30 shadow-xl hover:shadow-2xl transition-shadow duration-500">
                                 <div className="flex items-center gap-3 bg-gradient-to-r from-amber-600 via-amber-500 to-orange-600 px-6 py-4 relative overflow-hidden">
                                     <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 animate-shimmer"></div>
                                     <div className="h-10 w-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-lg">
-                                        <span className="material-symbols-outlined text-white" style={{ fontSize: "1.4rem" }}>inventory_2</span>
+                                        <span className="material-symbols-outlined text-white" style={{ fontSize: "1.4rem" }}>receipt_long</span>
                                     </div>
-                                    <span className="text-base font-black text-white tracking-wide uppercase">Supply LoadOut</span>
+                                    <span className="text-base font-black text-white tracking-wide uppercase">Requisition - Auto Supply Loader</span>
                                     <div className="ml-auto">
                                         <span className="px-3 py-1 bg-white/20 rounded-full text-[10px] font-bold text-white uppercase tracking-wider backdrop-blur-sm border border-white/30">Optional</span>
                                     </div>
                                 </div>
-                                <div className="flex border-b border-amber-100 bg-gradient-to-r from-amber-50/50 to-orange-50/50">
-                                    {SUPPLY_CATALOGUE.map(cat => (
-                                        <button
-                                            key={cat.category}
-                                            onClick={() => setActiveCategory(cat.category)}
-                                            className={`flex-1 px-5 py-4 text-sm font-black transition-all border-b-4 hover:bg-white/50 ${activeCategory === cat.category ? "border-amber-500 text-amber-700 bg-white shadow-lg" : "border-transparent text-slate-500 hover:text-amber-600"}`}
-                                        >
-                                            {cat.category}
-                                        </button>
-                                    ))}
-                                    <button
-                                        onClick={() => setActiveCategory("Others")}
-                                        className={`flex-1 px-5 py-4 text-sm font-black transition-all border-b-4 hover:bg-white/50 ${activeCategory === "Others" ? "border-amber-500 text-amber-700 bg-white shadow-lg" : "border-transparent text-slate-500 hover:text-amber-600"}`}
-                                    >
-                                        Others
-                                    </button>
-                                </div>
-                                <div className="p-6">
-                                    {activeCategory === "Others" ? (
-                                        <div className="space-y-3 max-w-2xl">
-                                            <label className="flex items-center gap-2 text-sm font-bold text-slate-700 uppercase tracking-wide">
-                                                <span className="h-1 w-1 rounded-full bg-amber-500"></span>
-                                                Special Notes
-                                            </label>
-                                            <textarea
-                                                value={othersNote}
-                                                onChange={(e) => setOthersNote(e.target.value)}
-                                                rows={4}
-                                                className="w-full rounded-xl border-2 border-slate-200 px-5 py-4 text-sm font-medium focus:border-amber-500 focus:ring-4 focus:ring-amber-500/20 focus:outline-none resize-none transition-all bg-white shadow-sm hover:shadow-md"
-                                                placeholder="Special notes or other supplies..."
-                                            />
-                                        </div>
-                                    ) : (
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                                            {SUPPLY_CATALOGUE.find(c => c.category === activeCategory)?.items.map(item => (
-                                                <div key={item} className="group relative">
-                                                    <div className="flex flex-col items-center justify-center gap-3 p-4 rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-white to-slate-50 hover:border-amber-300 hover:shadow-lg transition-all duration-300 aspect-square">
-                                                        <span className="text-xs font-bold text-slate-700 group-hover:text-amber-600 transition-colors text-center leading-tight">{item}</span>
-                                                        <input
-                                                            type="text"
-                                                            value={getQty(activeCategory, item) || ""}
-                                                            onChange={(e) => setQty(activeCategory, item, parseInt(e.target.value) || 0)}
-                                                            className="w-14 h-10 text-center text-sm font-black border-2 border-slate-200 rounded-lg bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 focus:outline-none transition-all shadow-sm"
-                                                            placeholder="0"
-                                                        />
+                                <div className="p-6 space-y-4">
+                                    <div className="space-y-3">
+                                        <label className="flex items-center gap-2 text-sm font-bold text-slate-700 uppercase tracking-wide">
+                                            <span className="h-1 w-1 rounded-full bg-amber-500"></span>
+                                            Select Requisition
+                                        </label>
+                                        {loadingRequisitions ? (
+                                            <div className="w-full rounded-xl border-2 border-slate-200 px-5 py-3 text-sm font-medium bg-white shadow-sm text-slate-500">
+                                                Loading Requisitions...
+                                            </div>
+                                        ) : approvedRequisitions.length === 0 ? (
+                                            <div className="w-full rounded-xl border-2 border-amber-200 px-5 py-3 text-sm font-medium bg-amber-50 text-amber-700">
+                                                No released requisitions found.
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">
+                                                {approvedRequisitions.map((req) => {
+                                                    const isSelected = requisitionNumber === req.requisitionNumber;
+                                                    return (
+                                                        <button
+                                                            key={req.id}
+                                                            type="button"
+                                                            onClick={() => handleRequisitionChange(req)}
+                                                            className={`text-left p-3 rounded-xl border-2 transition-all ${isSelected
+                                                                ? "border-emerald-500 bg-emerald-50 shadow-md"
+                                                                : "border-slate-200 bg-white hover:border-amber-300 hover:shadow-sm"
+                                                                }`}
+                                                        >
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <p className="text-sm font-bold text-slate-800 truncate">{req.requisitionNumber}</p>
+                                                                {isSelected && (
+                                                                    <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: "1rem" }}>check_circle</span>
+                                                                )}
+                                                            </div>
+                                                            {req.requestedByName && (
+                                                                <p className="text-[11px] text-slate-500 mt-1 truncate">Requested by: {req.requestedByName}</p>
+                                                            )}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                        {loadingSupplies && (
+                                            <p className="text-xs text-amber-600 font-semibold">Loading supplies from selected requisition...</p>
+                                        )}
+                                        <p className="text-xs text-slate-500 italic">Select a released requisition to automatically load supplies from your inventory management system.</p>
+                                    </div>
+
+                                    {/* Loaded Supplies Preview */}
+                                    {fetchedSupplies.length > 0 && (
+                                        <div className="pt-4 border-t border-amber-100">
+                                            <p className="text-xs font-bold text-slate-600 uppercase mb-3">Loaded Supplies ({fetchedSupplies.length} items)</p>
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-48 overflow-y-auto">
+                                                {fetchedSupplies.map((supply, idx) => (
+                                                    <div key={idx} className="p-2 rounded-lg bg-white border border-amber-200 hover:border-amber-400 transition-all">
+                                                        <p className="text-xs font-semibold text-slate-700 truncate">{supply.item}</p>
+                                                        <div className="flex items-center justify-between mt-1">
+                                                            <p className="text-[10px] text-slate-500">{supply.category}</p>
+                                                            <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded text-[10px] font-bold">x{supply.quantity}</span>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
                                     )}
+
+                                    {/* Special Notes */}
+                                    <div className="pt-4 border-t border-amber-100">
+                                        <label className="flex items-center gap-2 text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">
+                                            <span className="h-1 w-1 rounded-full bg-amber-500"></span>
+                                            Additional Notes (Optional)
+                                        </label>
+                                        <textarea
+                                            value={othersNote}
+                                            onChange={(e) => setOthersNote(e.target.value)}
+                                            rows={3}
+                                            className="w-full rounded-xl border-2 border-slate-200 px-5 py-4 text-sm font-medium focus:border-amber-500 focus:ring-4 focus:ring-amber-500/20 focus:outline-none resize-none transition-all bg-white shadow-sm hover:shadow-md"
+                                            placeholder="Any special notes about this dispatch..."
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1333,30 +1541,29 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                         <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Inventory Loadout</h3>
                                     </div>
                                     <div className="h-px flex-1 bg-slate-100 mx-6" />
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{activeSupplies.length} Items Selected</span>
+                                    {requisitionNumber.trim() && <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded uppercase border border-amber-200">{requisitionNumber}</span>}
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase ml-4">{fetchedSupplies.length} Items</span>
                                 </div>
 
                                 <div className="max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-                                    {activeSupplies.length > 0 ? (
+                                    {fetchedSupplies.length > 0 ? (
                                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-                                            {activeSupplies.map(([key, qty]) => {
-                                                const [, itm] = key.split("|");
-                                                return (
-                                                    <div key={key} className="flex items-center justify-between text-sm p-3 bg-white rounded-2xl border border-slate-100 hover:border-emerald-200 hover:shadow-md transition-all group">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 group-hover:bg-emerald-500 transition-colors" />
-                                                            <span className="text-slate-700 font-semibold">{itm}</span>
-                                                        </div>
-                                                        <span className="font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-100/50">
-                                                            x{qty}
-                                                        </span>
+                                            {fetchedSupplies.map((supply, idx) => (
+                                                <div key={idx} className="flex items-center justify-between text-sm p-3 bg-white rounded-2xl border border-slate-100 hover:border-emerald-200 hover:shadow-md transition-all group">
+                                                    <div className="flex flex-col gap-1">
+                                                        <span className="text-slate-700 font-semibold">{supply.item}</span>
+                                                        <span className="text-[10px] text-slate-500">{supply.category}</span>
                                                     </div>
-                                                );
-                                            })}
+                                                    <span className="font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-100/50 whitespace-nowrap">
+                                                        x{supply.quantity}
+                                                    </span>
+                                                </div>
+                                            ))}
                                         </div>
                                     ) : (
                                         <div className="text-center py-12 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
-                                            <p className="text-sm text-slate-400 italic font-medium">No logistical assets assigned to this dispatch</p>
+                                            <span className="material-symbols-outlined text-slate-300 text-4xl block mb-2">inventory_2</span>
+                                            <p className="text-sm text-slate-400 italic font-medium">No supplies loaded from requisition. Select a requisition to auto-populate supplies.</p>
                                         </div>
                                     )}
 
@@ -1426,6 +1633,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                 if (step === "form") {
                                     if (!personnels.trim()) { setError("Personnel assignment is required."); return; }
                                     if (!truck) { setError("Truck selection is required."); return; }
+                                    if (!requisitionNumber.trim()) { setError("Please select a released requisition before proceeding to summary review."); return; }
                                     if (!hasBlowbagets) { setError("All BLOWBAGETS checklist items must be checked before proceeding to summary review."); return; }
                                     setError("");
                                     setStep("summary");

@@ -36,8 +36,20 @@ service cloud.firestore {
       allow update: if isWebAdmin() || (isFieldPersonnel() && request.auth.uid == userId);
     }
 
+    // --- Archived Personnel (Web Admin Only) ---
+    match /archive_personnel/{archiveId} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+
     // --- Vehicles & History (Web Admin Only) ---
     match /vehicles/{vehicleId} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+
+    // --- Archived Vehicles (Web Admin Only) ---
+    match /archive_vehicle/{archiveId} {
       allow read: if isAuthenticated();
       allow write: if isWebAdmin();
     }
@@ -85,6 +97,24 @@ service cloud.firestore {
 
     // --- Metadata (For Dispatch ID Counter - Web Admin Only) ---
     match /meta/{document} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+
+    // --- Inventory Requisitions (Read for dispatch loading) ---
+    match /requisitions/{requisitionId} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+
+    // --- Inventory Items (Used to auto-load supplies) ---
+    match /items/{itemId} {
+      allow read: if isAuthenticated();
+      allow write: if isWebAdmin();
+    }
+
+    // --- Supply Classes (Reference data) ---
+    match /supply_classes/{classId} {
       allow read: if isAuthenticated();
       allow write: if isWebAdmin();
     }

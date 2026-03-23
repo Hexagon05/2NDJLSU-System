@@ -15,6 +15,7 @@ import {
   doc,
   updateDoc,
   deleteDoc,
+  setDoc,
 } from "firebase/firestore";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { logActivity } from "@/lib/activity-logger";
@@ -99,7 +100,9 @@ export default function VehiclePage() {
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [cancelConfirmationOpen, setCancelConfirmationOpen] = useState(false);
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [archiveConfirmationOpen, setArchiveConfirmationOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [archivingVehicle, setArchivingVehicle] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -509,6 +512,64 @@ export default function VehiclePage() {
     } catch (error) {
       console.error("Error deleting vehicle:", error);
       setErrorMsg("Failed to delete vehicle. Please try again.");
+    }
+  };
+
+  const handleArchiveVehicle = async () => {
+    if (!selectedVehicle || !selectedVehicle.id || archivingVehicle) return;
+
+    setArchivingVehicle(true);
+    setErrorMsg("");
+
+    try {
+      const vehicleSnapshot = { ...selectedVehicle };
+      const vehicleId = vehicleSnapshot.id;
+      const { id, ...vehicleData } = vehicleSnapshot;
+
+      await setDoc(doc(db, "archive_vehicle", vehicleId), {
+        ...vehicleData,
+        originalVehicleId: vehicleId,
+        archivedAt: Timestamp.now(),
+        archivedBy: user?.email || "unknown",
+      });
+
+      await deleteDoc(doc(db, "vehicles", vehicleId));
+
+      setVehicles((prev) => prev.filter((vehicle) => vehicle.id !== vehicleId));
+      setArchiveConfirmationOpen(false);
+      setDetailsModalOpen(false);
+      setEditModalOpen(false);
+      setDeleteConfirmationOpen(false);
+      setSelectedVehicle(null);
+      setOriginalVehicle(null);
+
+      setSuccessMsg("Vehicle archived successfully!");
+      setTimeout(() => setSuccessMsg(""), 3500);
+
+      if (user?.email) {
+        await logActivity(
+          "VEHICLE_ARCHIVED",
+          `Archived vehicle: ${vehicleSnapshot.codename} (${vehicleSnapshot.plate})`,
+          user.email,
+          {
+            vehicleId,
+            codename: vehicleSnapshot.codename,
+            plate: vehicleSnapshot.plate,
+            truckType: vehicleSnapshot.truckType,
+            assignedTo: vehicleSnapshot.personnelName,
+          }
+        );
+      }
+    } catch (error: any) {
+      console.error("Error archiving vehicle:", error);
+      const message = String(error?.message || "");
+      if (message.toLowerCase().includes("permission") || message.toLowerCase().includes("insufficient")) {
+        setErrorMsg("Permission denied while archiving vehicle. Please check Firestore rules/admin setup.");
+      } else {
+        setErrorMsg(message || "Failed to archive vehicle. Please try again.");
+      }
+    } finally {
+      setArchivingVehicle(false);
     }
   };
 
@@ -1474,6 +1535,15 @@ export default function VehiclePage() {
             <div className="flex justify-end gap-3 p-6 border-t border-slate-100 bg-slate-50">
               <button
                 type="button"
+                onClick={() => setArchiveConfirmationOpen(true)}
+                disabled={archivingVehicle}
+                className="rounded-lg bg-gradient-to-r from-rose-600 to-rose-700 py-2.5 px-6 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 hover:shadow-xl hover:bg-rose-700 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>archive</span>
+                {archivingVehicle ? "Archiving..." : "Archive"}
+              </button>
+              <button
+                type="button"
                 onClick={() => setDetailsModalOpen(false)}
                 className="rounded-lg border-2 border-slate-200 py-2.5 px-6 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-all"
               >
@@ -1489,6 +1559,56 @@ export default function VehiclePage() {
                 <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>edit</span>
                 Edit
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Archive Vehicle Confirmation Modal */}
+      {archiveConfirmationOpen && selectedVehicle && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            onClick={() => {
+              if (!archivingVehicle) setArchiveConfirmationOpen(false);
+            }}
+          />
+          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl animate-fade-in overflow-hidden">
+            <div className="bg-gradient-to-r from-rose-700 to-rose-800 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-rose-200" style={{ fontSize: "1.5rem" }}>
+                  archive
+                </span>
+                <h3 className="text-lg font-bold text-white">Archive Vehicle</h3>
+              </div>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-slate-700 mb-4">
+                Archive vehicle <span className="font-bold text-slate-900">{selectedVehicle.codename}</span>?
+              </p>
+              <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-3 mb-4">
+                This will move the vehicle to archive_vehicle and remove it from the active vehicle list.
+              </p>
+              {errorMsg && (
+                <p className="mt-2 text-xs text-rose-700 font-medium">{errorMsg}</p>
+              )}
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => setArchiveConfirmationOpen(false)}
+                  disabled={archivingVehicle}
+                  className="flex-1 rounded-lg border-2 border-slate-300 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleArchiveVehicle}
+                  disabled={archivingVehicle}
+                  className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-bold text-white hover:bg-rose-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>archive</span>
+                  {archivingVehicle ? "Archiving..." : "Archive"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
