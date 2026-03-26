@@ -38,6 +38,14 @@ interface RequisitionOption {
     embeddedSupplies: Supply[];
 }
 
+const normalizeLookupValue = (value: unknown): string =>
+    String(value ?? "").trim().toLowerCase();
+
+const isDeliveredStatus = (status: unknown): boolean => {
+    const normalized = normalizeLookupValue(status).replace(/[_-]+/g, " ");
+    return normalized === "delivered" || normalized === "completed";
+};
+
 interface Props {
     onClose: () => void;
     onSuccess: () => void;
@@ -157,6 +165,27 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const fetchApprovedRequisitionsInitial = async () => {
         setLoadingRequisitions(true);
         try {
+            // Exclude requisitions/POs already completed by delivered dispatches.
+            const deliveredDispatchRefs = new Set<string>();
+            const dispatchesSnap = await getDocs(collection(db, "dispatches"));
+            dispatchesSnap.forEach((dispatchDoc) => {
+                const data = dispatchDoc.data() as any;
+                if (!isDeliveredStatus(data.status)) return;
+
+                [
+                    data.requisitionNumber,
+                    data.requisitionNo,
+                    data.requestNumber,
+                    data.poNumber,
+                    data.po,
+                ].forEach((ref) => {
+                    const normalizedRef = normalizeLookupValue(ref);
+                    if (normalizedRef) {
+                        deliveredDispatchRefs.add(normalizedRef);
+                    }
+                });
+            });
+
             const requisitionSnap = await getDocs(collection(db, "requisitions"));
 
             const requisitionList = requisitionSnap.docs
@@ -205,7 +234,8 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     };
                 })
                 .filter((r) => r.isReleased)
-                    .map(({ id, requisitionNumber, requestedByName, embeddedSupplies }) => ({ id, requisitionNumber, requestedByName, embeddedSupplies }));
+                .map(({ id, requisitionNumber, requestedByName, embeddedSupplies }) => ({ id, requisitionNumber, requestedByName, embeddedSupplies }))
+                .filter((r) => !deliveredDispatchRefs.has(normalizeLookupValue(r.requisitionNumber)));
 
             setApprovedRequisitions(requisitionList);
         } catch (err) {
