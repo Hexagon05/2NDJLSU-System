@@ -11,6 +11,7 @@ export type ActivityType =
   | "VEHICLE_UPDATED"
   | "VEHICLE_ARCHIVED"
   | "DISPATCH_CREATED"
+  | "DISPATCH_UPDATED"
   | "DISPATCH_COMPLETED"
   | "EXPORT_EXCEL"
   | "LOGIN"
@@ -130,6 +131,7 @@ export const getActivityIcon = (type: ActivityType): string => {
     VEHICLE_UPDATED: "edit",
     VEHICLE_ARCHIVED: "inventory_2",
     DISPATCH_CREATED: "send",
+    DISPATCH_UPDATED: "edit_note",
     DISPATCH_COMPLETED: "task_alt",
     EXPORT_EXCEL: "download",
     LOGIN: "login",
@@ -147,6 +149,7 @@ export const getActivityColor = (type: ActivityType): string => {
     VEHICLE_UPDATED: "text-violet-500",
     VEHICLE_ARCHIVED: "text-amber-700",
     DISPATCH_CREATED: "text-emerald-600",
+    DISPATCH_UPDATED: "text-emerald-500",
     DISPATCH_COMPLETED: "text-green-600",
     EXPORT_EXCEL: "text-amber-600",
     LOGIN: "text-teal-600",

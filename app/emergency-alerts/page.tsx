@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
+import DispatchChatHub from "@/components/DispatchChatHub";
 
 interface EmergencyReport {
   id: string;
@@ -48,7 +49,7 @@ export default function EmergencyAlerts() {
   const normalizeStatus = (status?: string) => (status || "").trim().toLowerCase();
   const isResolvedStatus = (status?: string) => {
     const normalized = normalizeStatus(status);
-    return ["resolved", "complete", "completed", "closed", "cancelled", "canceled"].includes(normalized);
+    return normalized === "resolved";
   };
 
   // Fetch all emergency reports from Firebase
@@ -62,12 +63,12 @@ export default function EmergencyAlerts() {
     );
 
     const unsub = onSnapshot(q, (snap) => {
-      console.log("📚 Raw Firestore snapshot - docs count:", snap.docs.length);
+      console.log("ðŸ“š Raw Firestore snapshot - docs count:", snap.docs.length);
       
       const reports = snap.docs.map((d) => {
         const data = d.data();
         const reportId = d.id;
-        console.log("📝 Processing doc - ID:", reportId, "Exists:", d.exists());
+        console.log("ðŸ“ Processing doc - ID:", reportId, "Exists:", d.exists());
         
         return {
           ...data as Omit<EmergencyReport, "id">,
@@ -79,11 +80,11 @@ export default function EmergencyAlerts() {
       const ids = reports.map(r => r.id);
       const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
       if (duplicates.length > 0) {
-        console.warn("⚠️ Duplicate emergency report IDs found:", duplicates);
+        console.warn("âš ï¸ Duplicate emergency report IDs found:", duplicates);
       }
       
       // Log all report IDs for debugging
-      console.log("📋 Loaded emergency reports:", reports.length);
+      console.log("ðŸ“‹ Loaded emergency reports:", reports.length);
       reports.forEach((r, idx) => {
         console.log(`  [${idx}] ID: "${r.id}", Type: ${typeof r.id}, Valid: ${!!r.id}, Length: ${r.id?.length}`);
       });
@@ -100,7 +101,7 @@ export default function EmergencyAlerts() {
     
     // Don't auto-open if modal is already open
     if (selectedReport !== null) {
-      console.log("🚫 Skipping auto-open - modal already open");
+      console.log("ðŸš« Skipping auto-open - modal already open");
       return;
     }
     
@@ -114,12 +115,12 @@ export default function EmergencyAlerts() {
       const newestReport = unseenReports[0]; // Already sorted by timestamp desc
       
       if (!newestReport.id) {
-        console.error("❌ Cannot auto-open report without ID:", newestReport);
+        console.error("âŒ Cannot auto-open report without ID:", newestReport);
         return;
       }
       
-      console.log("🚨 NEW EMERGENCY REPORT DETECTED:", newestReport.id);
-      console.log("📋 Report details:", {
+      console.log("ðŸš¨ NEW EMERGENCY REPORT DETECTED:", newestReport.id);
+      console.log("ðŸ“‹ Report details:", {
         type: newestReport.type,
         sender: newestReport.senderName || newestReport.reportedBy,
         dispatchId: newestReport.dispatchId,
@@ -143,17 +144,17 @@ export default function EmergencyAlerts() {
 
   // Mark report as seen when manually opened
   const handleReportClick = (report: EmergencyReport) => {
-    console.log("👆 Report clicked manually - ID:", report.id, "Current modal state:", selectedReport?.id);
+    console.log("ðŸ‘† Report clicked manually - ID:", report.id, "Current modal state:", selectedReport?.id);
     
     if (!report.id) {
-      console.error("❌ Cannot open report without ID:", report);
+      console.error("âŒ Cannot open report without ID:", report);
       alert("Error: This report has no ID. Please refresh the page.");
       return;
     }
     
     // Prevent opening if this report is already open
     if (selectedReport?.id === report.id) {
-      console.log("🚫 Report already open, skipping");
+      console.log("ðŸš« Report already open, skipping");
       return;
     }
     
@@ -165,7 +166,7 @@ export default function EmergencyAlerts() {
   const handleResolveReport = async (reportId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
-    console.log("🔍 handleResolveReport called with:", { 
+    console.log("ðŸ” handleResolveReport called with:", { 
       reportId, 
       type: typeof reportId, 
       length: reportId?.length,
@@ -175,7 +176,7 @@ export default function EmergencyAlerts() {
     });
     
     if (!reportId || typeof reportId !== 'string' || reportId.trim() === '') {
-      console.error("❌ Invalid report ID:", reportId);
+      console.error("âŒ Invalid report ID:", reportId);
       alert("Cannot resolve: Invalid report ID. Please refresh the page and try again.");
       return;
     }
@@ -187,8 +188,8 @@ export default function EmergencyAlerts() {
     if (!confirmed) return;
 
     try {
-      console.log("✅ Resolving emergency report:", reportId);
-      console.log("📍 Document path:", `EmergencyReports/${reportId}`);
+      console.log("âœ… Resolving emergency report:", reportId);
+      console.log("ðŸ“ Document path:", `EmergencyReports/${reportId}`);
       
       const reportRef = doc(db, "EmergencyReports", reportId);
       await updateDoc(reportRef, {
@@ -197,11 +198,11 @@ export default function EmergencyAlerts() {
         resolvedBy: user?.uid,
       });
       
-      console.log("✅ Emergency resolved successfully");
+      console.log("âœ… Emergency resolved successfully");
     } catch (error: any) {
-      console.error("❌ Error resolving emergency:", error);
-      console.error("❌ Error code:", error?.code);
-      console.error("❌ Report ID was:", reportId);
+      console.error("âŒ Error resolving emergency:", error);
+      console.error("âŒ Error code:", error?.code);
+      console.error("âŒ Report ID was:", reportId);
       alert(`Failed to resolve emergency: ${error?.message || "Unknown error"}`);
     }
   };
@@ -220,7 +221,7 @@ export default function EmergencyAlerts() {
   ];
 
   const formatTimestamp = (ts: Timestamp | null): string => {
-    if (!ts) return "—";
+    if (!ts) return "â€”";
     return ts.toDate().toLocaleString("en-PH", {
       month: "short",
       day: "numeric",
@@ -231,7 +232,7 @@ export default function EmergencyAlerts() {
   };
 
   const getTimeElapsed = (timestamp: Timestamp | null): string => {
-    if (!timestamp) return "—";
+    if (!timestamp) return "â€”";
     const now = new Date();
     const date = timestamp.toDate();
     const diffMs = now.getTime() - date.getTime();
@@ -413,6 +414,7 @@ export default function EmergencyAlerts() {
             </div>
             <div className="flex items-center gap-3">
               <NotificationsDropdown userEmail={user?.email ?? undefined} />
+              <DispatchChatHub />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>
@@ -436,7 +438,7 @@ export default function EmergencyAlerts() {
                   <span className="material-symbols-outlined text-white text-5xl animate-bounce">priority_high</span>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-xl font-black uppercase tracking-wide">⚠️ New Emergency Alert!</h3>
+                  <h3 className="text-xl font-black uppercase tracking-wide">âš ï¸ New Emergency Alert!</h3>
                   <p className="text-sm font-semibold text-white/90 mt-1">
                     {unseenCount} {unseenCount === 1 ? 'new emergency report' : 'new emergency reports'} requiring immediate attention
                   </p>
@@ -620,7 +622,7 @@ export default function EmergencyAlerts() {
                               <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
                               <span className="text-xs text-slate-400 mt-0.5">
                                 {report.location?.lat != null && report.location?.lng != null
-                                  ? `${report.location.lat.toFixed(4)}°, ${report.location.lng.toFixed(4)}°`
+                                  ? `${report.location.lat.toFixed(4)}Â°, ${report.location.lng.toFixed(4)}Â°`
                                   : "Coordinates unavailable"}
                               </span>
                             </div>
@@ -643,7 +645,7 @@ export default function EmergencyAlerts() {
                             {!isResolvedStatus(report.status) && report.id && (
                               <button
                                 onClick={(e) => {
-                                  console.log("🔘 Resolve button clicked for report:", report.id, "Type:", typeof report.id);
+                                  console.log("ðŸ”˜ Resolve button clicked for report:", report.id, "Type:", typeof report.id);
                                   if (!report.id) {
                                     alert("Error: Report has no ID. Please refresh the page.");
                                     return;
@@ -669,7 +671,7 @@ export default function EmergencyAlerts() {
             {activeReports.length > 0 && (
               <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
                 <p className="text-xs text-slate-500 font-medium">
-                  Showing {(activeSafePage - 1) * ACTIVE_PER_PAGE + 1}–{Math.min(activeSafePage * ACTIVE_PER_PAGE, activeReports.length)} of {activeReports.length}
+                  Showing {(activeSafePage - 1) * ACTIVE_PER_PAGE + 1}â€“{Math.min(activeSafePage * ACTIVE_PER_PAGE, activeReports.length)} of {activeReports.length}
                 </p>
                 <div className="flex items-center gap-1">
                   <button
@@ -801,7 +803,7 @@ export default function EmergencyAlerts() {
                                   <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
                                   <span className="text-xs text-slate-400 mt-0.5">
                                     {report.location?.lat != null && report.location?.lng != null
-                                      ? `${report.location.lat.toFixed(4)}°, ${report.location.lng.toFixed(4)}°`
+                                      ? `${report.location.lat.toFixed(4)}Â°, ${report.location.lng.toFixed(4)}Â°`
                                       : "Coordinates unavailable"}
                                   </span>
                                 </div>
@@ -829,7 +831,7 @@ export default function EmergencyAlerts() {
                 {filteredResolvedReports.length > 0 && (
                   <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
                     <p className="text-xs text-slate-500 font-medium">
-                      Showing {(resolvedSafePage - 1) * RESOLVED_PER_PAGE + 1}–{Math.min(resolvedSafePage * RESOLVED_PER_PAGE, filteredResolvedReports.length)} of {filteredResolvedReports.length}
+                      Showing {(resolvedSafePage - 1) * RESOLVED_PER_PAGE + 1}â€“{Math.min(resolvedSafePage * RESOLVED_PER_PAGE, filteredResolvedReports.length)} of {filteredResolvedReports.length}
                     </p>
                     <div className="flex items-center gap-1">
                       <button

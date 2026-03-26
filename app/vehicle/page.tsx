@@ -20,6 +20,7 @@ import {
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { logActivity } from "@/lib/activity-logger";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
+import DispatchChatHub from "@/components/DispatchChatHub";
 
 interface Vehicle {
   id?: string;
@@ -104,8 +105,6 @@ export default function VehiclePage() {
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [archivingVehicle, setArchivingVehicle] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>("");
   const [viewMode, setViewMode] = useState<"table" | "card">("card");
   
   // Multiple image states
@@ -241,32 +240,6 @@ export default function VehiclePage() {
     router.push("/login");
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      // Validate file type
-      const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
-      if (!validTypes.includes(file.type)) {
-        setErrorMsg("Invalid file type. Please upload a valid image (JPEG, PNG, GIF, or WebP).");
-        return;
-      }
-      // Validate file size (max 10MB)
-      const maxSize = 10 * 1024 * 1024;
-      if (file.size > maxSize) {
-        setErrorMsg("File size too large. Maximum size is 10MB.");
-        return;
-      }
-      setImageFile(file);
-      // Create preview
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-      setErrorMsg("");
-    }
-  };
-
   const handleMultipleImageChange = (e: React.ChangeEvent<HTMLInputElement>, view: 'front' | 'back' | 'left' | 'right') => {
     const file = e.target.files?.[0];
     if (file) {
@@ -396,7 +369,7 @@ export default function VehiclePage() {
       
       // Check for permission errors
       if (errorMessage.includes("PERMISSION") || errorMessage.includes("permission") || errorMessage.includes("Missing or insufficient permissions")) {
-        setErrorMsg("⚠️ Permission denied. You need web admin access. Please visit /setup-admin to configure your account.");
+        setErrorMsg("âš ï¸ Permission denied. You need web admin access. Please visit /setup-admin to configure your account.");
       } else {
         setErrorMsg(`Failed to add vehicle: ${errorMessage}`);
       }
@@ -423,7 +396,9 @@ export default function VehiclePage() {
     
     try {
       // Upload new images if selected
-      const uploadedImages = { ...selectedVehicle.images } || {};
+      const uploadedImages: NonNullable<Vehicle["images"]> = {
+        ...(selectedVehicle.images ?? {}),
+      };
       
       setUploadingImage(true);
       try {
@@ -523,6 +498,9 @@ export default function VehiclePage() {
 
     try {
       const vehicleSnapshot = { ...selectedVehicle };
+      if (!vehicleSnapshot.id) {
+        throw new Error("Selected vehicle record is missing an ID.");
+      }
       const vehicleId = vehicleSnapshot.id;
       const { id, ...vehicleData } = vehicleSnapshot;
 
@@ -709,6 +687,7 @@ export default function VehiclePage() {
             </div>
             <div className="flex items-center gap-4">
               <NotificationsDropdown userEmail={user?.email ?? undefined} />
+              <DispatchChatHub />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>
@@ -1061,7 +1040,7 @@ export default function VehiclePage() {
                     </div>
                     
                     <p className="text-xs text-slate-500 text-center">
-                      JPEG, PNG, GIF, WebP • Max: 10MB each
+                      JPEG, PNG, GIF, WebP â€¢ Max: 10MB each
                     </p>
                     {uploadingImage && (
                       <p className="text-xs text-emerald-600 flex items-center justify-center gap-1 font-semibold">
@@ -1686,7 +1665,7 @@ export default function VehiclePage() {
                       </div>
                       
                       <p className="text-xs text-slate-500 text-center">
-                        JPEG, PNG, GIF, WebP • Max: 10MB each
+                        JPEG, PNG, GIF, WebP â€¢ Max: 10MB each
                       </p>
                       {uploadingImage && (
                         <p className="text-xs text-teal-700 flex items-center justify-center gap-1 font-semibold">

@@ -7,7 +7,6 @@ import Image from "next/image";
 import { db } from "@/lib/firebase";
 import {
     collection,
-    addDoc,
     getDocs,
     Timestamp,
     orderBy,
@@ -17,10 +16,10 @@ import {
     setDoc,
     deleteDoc,
 } from "firebase/firestore";
-import { hashPassword } from "@/lib/password-utils";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { logActivity } from "@/lib/activity-logger";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
+import DispatchChatHub from "@/components/DispatchChatHub";
 
 interface Officer {
     id?: string;
@@ -149,7 +148,7 @@ export default function PersonnelsPage() {
         }
     }, [editModalOpen, selectedPersonnel?.imageUrl]);
 
-    // ── auth guards ─────────────────────────────────────────────────
+    // â”€â”€ auth guards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (loading) {
         return (
             <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
@@ -176,12 +175,12 @@ export default function PersonnelsPage() {
         router.push("/login");
     };
 
-    // ── form helpers ────────────────────────────────────────────────
+    // â”€â”€ form helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
     };
 
-    // ── password validation ─────────────────────────────────────────
+    // â”€â”€ password validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const validatePassword = (password: string): { valid: boolean; error?: string } => {
         if (password.length < 8) {
             return { valid: false, error: "Password must be at least 8 characters" };
@@ -195,7 +194,7 @@ export default function PersonnelsPage() {
         return { valid: true };
     };
 
-    // ── generate personnel ID ───────────────────────────────────────
+    // â”€â”€ generate personnel ID â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const generatePersonnelId = (): string => {
         const currentYear = new Date().getFullYear();
         const yearStr = String(currentYear);
@@ -276,26 +275,34 @@ export default function PersonnelsPage() {
                 return;
             }
             
-            // Generate personnel ID as username
-            const username = generatePersonnelId();
-            
-            // Hash password for storage
-            const hashedPassword = await hashPassword(form.password);
-            
-            // Remove plain password and confirmPassword from form data
-            const { password, confirmPassword, ...formDataWithoutPassword } = form;
-            
-            // Add personnel account with all information
-            await addDoc(collection(db, "personnelAccount"), {
-                ...formDataWithoutPassword,
-                username,
-                password: hashedPassword,
-                dateAdded: today,
-                role: "officer",
-                isActive: true,
-                createdAt: Timestamp.now(),
-                imageUrl: imageUrl || "",
+            // Call API to create personnel with Firebase Auth user
+            const response = await fetch("/api/personnel", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    email: form.email,
+                    password: form.password,
+                    firstName: form.firstName,
+                    lastName: form.lastName,
+                    middleInitial: form.middleInitial,
+                    rank: form.rank,
+                    position: form.position,
+                    contactNo: form.contactNo,
+                    dateOfBirth: form.dateOfBirth,
+                    currentAddress: form.currentAddress,
+                    permanentAddress: form.permanentAddress,
+                    imageUrl: imageUrl || "",
+                }),
             });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || "Failed to create personnel");
+            }
+            
+            const responseData = await response.json();
             
             // Log activity
             if (user?.email) {
@@ -308,12 +315,12 @@ export default function PersonnelsPage() {
                         lastName: form.lastName,
                         rank: form.rank,
                         position: form.position,
-                        username: username,
+                        uid: responseData.uid,
                     }
                 );
             }
             
-            setSuccessMsg(`Personnel added successfully! Username: ${username}`);
+            setSuccessMsg(`âœ… Personnel added successfully with Firebase Auth account!`);
             setForm({ ...EMPTY_FORM });
             setModalOpen(false);
             setImageFile(null);
@@ -326,7 +333,7 @@ export default function PersonnelsPage() {
             
             // Check for permission errors
             if (errorMessage.includes("PERMISSION") || errorMessage.includes("permission") || errorMessage.includes("Missing or insufficient permissions")) {
-                setErrorMsg("⚠️ Permission denied. You need web admin access. Please visit /setup-admin to configure your account.");
+                setErrorMsg("âš ï¸ Permission denied. You need web admin access. Please visit /setup-admin to configure your account.");
             } else {
                 setErrorMsg(`Failed to add personnel: ${errorMessage}`);
             }
@@ -444,6 +451,9 @@ export default function PersonnelsPage() {
 
         try {
             const personnelSnapshot = { ...selectedPersonnel };
+            if (!personnelSnapshot.id) {
+                throw new Error("Selected personnel record is missing an ID.");
+            }
             const personnelId = personnelSnapshot.id;
             const { id, ...personnelData } = personnelSnapshot;
 
@@ -508,7 +518,7 @@ export default function PersonnelsPage() {
         setArchiveConfirmationOpen(true);
     };
 
-    // ── filter ──────────────────────────────────────────────────────
+    // â”€â”€ filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const filtered = personnels.filter((o) => {
         const term = searchTerm.toLowerCase();
         return (
@@ -520,7 +530,7 @@ export default function PersonnelsPage() {
         );
     });
 
-    // ── avatar initials ─────────────────────────────────────────────
+    // â”€â”€ avatar initials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const initials = (o: Officer) =>
         `${o.firstName.charAt(0)}${o.lastName.charAt(0)}`.toUpperCase();
 
@@ -534,10 +544,10 @@ export default function PersonnelsPage() {
     ];
     const getAvatarColor = (idx: number) => avatarColors[idx % avatarColors.length];
 
-    // ── render ──────────────────────────────────────────────────────
+    // â”€â”€ render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     return (
         <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
-            {/* ── Sidebar ── */}
+            {/* â”€â”€ Sidebar â”€â”€ */}
             <div
                 className={`${sidebarOpen ? "w-64" : "w-20"
                     } bg-gradient-to-b from-slate-900 to-slate-800 shadow-2xl transition-all duration-300 ease-in-out flex flex-col border-r border-slate-700/50`}
@@ -624,7 +634,7 @@ export default function PersonnelsPage() {
                 </div>
             </div>
 
-            {/* ── Main Content ── */}
+            {/* â”€â”€ Main Content â”€â”€ */}
             <div className="flex flex-1 flex-col overflow-hidden">
                 {/* Header */}
                 <header className="border-b border-slate-200 bg-white/80 backdrop-blur-sm px-6 py-4 shadow-sm">
@@ -642,6 +652,7 @@ export default function PersonnelsPage() {
                         </div>
                         <div className="flex items-center gap-4">
                             <NotificationsDropdown userEmail={user?.email} />
+                            <DispatchChatHub />
                             <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                                 <div className="text-right">
                                     <p className="text-sm font-semibold text-slate-900">{user?.email}</p>
@@ -735,10 +746,10 @@ export default function PersonnelsPage() {
                             <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "1rem" }}>
                                 groups
                             </span>
-                            {fetchLoading ? "Loading…" : `${filtered.length} officer${filtered.length !== 1 ? "s" : ""} found`}
+                            {fetchLoading ? "Loadingâ€¦" : `${filtered.length} officer${filtered.length !== 1 ? "s" : ""} found`}
                         </div>
 
-                        {/* ── Card View ── */}
+                        {/* â”€â”€ Card View â”€â”€ */}
                         {viewMode === "card" && (
                             <div>
                                 {fetchLoading ? (
@@ -810,7 +821,7 @@ export default function PersonnelsPage() {
                                                                     call
                                                                 </span>
                                                             </div>
-                                                            <span className="font-semibold text-slate-700 truncate">{officer.contactNo || "—"}</span>
+                                                            <span className="font-semibold text-slate-700 truncate">{officer.contactNo || "â€”"}</span>
                                                         </div>
                                                         <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 transition-all duration-200">
                                                             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
@@ -818,7 +829,7 @@ export default function PersonnelsPage() {
                                                                     mail
                                                                 </span>
                                                             </div>
-                                                            <span className="truncate font-semibold text-slate-700">{officer.email || "—"}</span>
+                                                            <span className="truncate font-semibold text-slate-700">{officer.email || "â€”"}</span>
                                                         </div>
                                                         <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 transition-all duration-200">
                                                             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
@@ -846,7 +857,7 @@ export default function PersonnelsPage() {
                             </div>
                         )}
 
-                        {/* ── List View ── */}
+                        {/* â”€â”€ List View â”€â”€ */}
                         {viewMode === "list" && (
                             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
                                 {fetchLoading ? (
@@ -910,8 +921,8 @@ export default function PersonnelsPage() {
                                                             {officer.position}
                                                         </span>
                                                     </td>
-                                                    <td className="px-6 py-4 text-sm text-slate-600">{officer.contactNo || "—"}</td>
-                                                    <td className="px-6 py-4 text-sm text-slate-600">{officer.email || "—"}</td>
+                                                    <td className="px-6 py-4 text-sm text-slate-600">{officer.contactNo || "â€”"}</td>
+                                                    <td className="px-6 py-4 text-sm text-slate-600">{officer.email || "â€”"}</td>
                                                     <td className="px-6 py-4 text-sm text-slate-500">{officer.dateAdded}</td>
                                                 </tr>
                                             ))}
@@ -924,7 +935,7 @@ export default function PersonnelsPage() {
                 </div>
             </div>
 
-            {/* ── Add Personnel Modal ── */}
+            {/* â”€â”€ Add Personnel Modal â”€â”€ */}
             {modalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     {/* Backdrop */}
@@ -1022,7 +1033,7 @@ export default function PersonnelsPage() {
                                     Choose Profile Image
                                 </label>
                                 <p className="text-xs text-slate-500 mt-3 text-center">
-                                    Supported: JPEG, PNG, GIF, WebP • Max size: 10MB
+                                    Supported: JPEG, PNG, GIF, WebP â€¢ Max size: 10MB
                                 </p>
                                 {uploadingImage && (
                                     <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1 font-semibold">
@@ -1077,7 +1088,7 @@ export default function PersonnelsPage() {
                                             </button>
                                         </div>
                                         <p className="text-xs text-slate-500 mt-1">
-                                            Min 8 chars • 1 number • 1 symbol
+                                            Min 8 chars â€¢ 1 number â€¢ 1 symbol
                                         </p>
                                     </div>
                                     <div>
@@ -1295,7 +1306,7 @@ export default function PersonnelsPage() {
                                             <span className="material-symbols-outlined animate-spin" style={{ fontSize: "1rem" }}>
                                                 progress_activity
                                             </span>
-                                            Saving…
+                                            Savingâ€¦
                                         </>
                                     ) : (
                                         <>
@@ -1312,7 +1323,7 @@ export default function PersonnelsPage() {
                 </div>
             )}
 
-            {/* ── Personnel Details Modal ── */}
+            {/* â”€â”€ Personnel Details Modal â”€â”€ */}
             {detailsModalOpen && selectedPersonnel && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
                     <div
@@ -1447,7 +1458,7 @@ export default function PersonnelsPage() {
                 </div>
             )}
 
-            {/* ── Archive Confirmation Modal ── */}
+            {/* â”€â”€ Archive Confirmation Modal â”€â”€ */}
             {archiveConfirmationOpen && selectedPersonnel && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
                     <div
@@ -1494,7 +1505,7 @@ export default function PersonnelsPage() {
                 </div>
             )}
 
-            {/* ── Edit Personnel Modal ── */}
+            {/* â”€â”€ Edit Personnel Modal â”€â”€ */}
             {editModalOpen && selectedPersonnel && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div
@@ -1577,7 +1588,7 @@ export default function PersonnelsPage() {
                                     Change Profile Image
                                 </label>
                                 <p className="text-xs text-slate-500 mt-3 text-center">
-                                    JPEG, PNG, GIF, WebP • Max: 10MB
+                                    JPEG, PNG, GIF, WebP â€¢ Max: 10MB
                                 </p>
                                 {uploadingImage && (
                                     <p className="text-xs text-teal-700 mt-2 flex items-center gap-1 font-semibold">
@@ -1723,7 +1734,7 @@ export default function PersonnelsPage() {
                 </div>
             )}
 
-            {/* ── Save Confirmation Modal ── */}
+            {/* â”€â”€ Save Confirmation Modal â”€â”€ */}
             {confirmationOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div
@@ -1757,7 +1768,7 @@ export default function PersonnelsPage() {
                 </div>
             )}
 
-            {/* ── Cancel Edit Confirmation Modal ── */}
+            {/* â”€â”€ Cancel Edit Confirmation Modal â”€â”€ */}
             {cancelConfirmationOpen && selectedPersonnel && originalPersonnel && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div

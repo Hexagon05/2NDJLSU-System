@@ -61,7 +61,7 @@ export default function TICEmergencyModal({
 
   // Debug: Log IDs when component mounts or props change
   useEffect(() => {
-    console.log("🔍 Modal opened with:", {
+    console.log("ðŸ” Modal opened with:", {
       emergencyReportId,
       dispatchId,
       willUseCollection: dispatchId ? "dispatches" : "EmergencyReports",
@@ -75,7 +75,7 @@ export default function TICEmergencyModal({
       if (!user) return;
 
       try {
-        console.log("🔍 Checking user role for:", user.uid);
+        console.log("ðŸ” Checking user role for:", user.uid);
         
         // Check if user exists in "users" collection (admin)
         const userDoc = await getDoc(doc(db, "users", user.uid));
@@ -83,7 +83,7 @@ export default function TICEmergencyModal({
           setIsAdmin(true);
           setUserDisplayName(user.displayName || user.email || "Admin");
           setRoleChecked(true);
-          console.log("✅ User is ADMIN:", user.displayName || user.email);
+          console.log("âœ… User is ADMIN:", user.displayName || user.email);
           return;
         }
 
@@ -94,7 +94,7 @@ export default function TICEmergencyModal({
           const data = personnelDoc.data();
           setUserDisplayName(data?.fullName || data?.name || "Personnel");
           setRoleChecked(true);
-          console.log("✅ User is PERSONNEL:", data?.fullName || data?.name);
+          console.log("âœ… User is PERSONNEL:", data?.fullName || data?.name);
           return;
         }
 
@@ -102,9 +102,9 @@ export default function TICEmergencyModal({
         setIsAdmin(false);
         setUserDisplayName(user.displayName || user.email || "User");
         setRoleChecked(true);
-        console.warn("⚠️ User not found in users or personnelAccount collections");
+        console.warn("âš ï¸ User not found in users or personnelAccount collections");
       } catch (error) {
-        console.error("❌ Error checking user role:", error);
+        console.error("âŒ Error checking user role:", error);
         setIsAdmin(false);
         setUserDisplayName(user.displayName || user.email || "User");
         setRoleChecked(true);
@@ -116,36 +116,84 @@ export default function TICEmergencyModal({
 
   // Real-time listener for messages
   useEffect(() => {
-    // Priority: Use dispatchId if available (mobile app uses this), otherwise use emergencyReportId
-    const chatId = dispatchId || emergencyReportId;
-    const collectionName = dispatchId ? "dispatches" : "EmergencyReports";
-    
-    if (!chatId) {
-      console.warn("⚠️ No dispatchId or emergencyReportId provided");
+    if (!emergencyReportId && !dispatchId) {
+      console.warn("âš ï¸ No dispatchId or emergencyReportId provided");
       return;
     }
 
-    console.log(`📡 Starting to listen for messages in: ${collectionName}/${chatId}`);
-    const messagesRef = collection(db, collectionName, chatId, "messages");
-    const q = query(messagesRef, orderBy("timestamp", "asc"));
+    const unsubscribers: Array<() => void> = [];
+    let emergencyMessages: Message[] = [];
+    let dispatchMessages: Message[] = [];
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const loadedMessages = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as Omit<Message, "id">),
-        }));
-        console.log("📨 Loaded messages:", loadedMessages.length);
-        setMessages(loadedMessages);
-      },
-      (error) => {
-        console.error("❌ Error listening to messages:", error);
-        alert("Error loading messages: " + error.message);
-      }
-    );
+    const mergeAndSetMessages = () => {
+      const merged = [...emergencyMessages, ...dispatchMessages];
+      const dedupedMap = new Map<string, Message>();
 
-    return () => unsubscribe();
+      merged.forEach((msg) => {
+        const key = `${msg.senderId}|${msg.text}|${msg.timestamp?.toMillis?.() ?? 0}|${msg.isAdmin ? "1" : "0"}`;
+        if (!dedupedMap.has(key)) {
+          dedupedMap.set(key, msg);
+        }
+      });
+
+      const deduped = Array.from(dedupedMap.values()).sort((a, b) => {
+        const aTime = a.timestamp?.toMillis?.() ?? 0;
+        const bTime = b.timestamp?.toMillis?.() ?? 0;
+        return aTime - bTime;
+      });
+
+      setMessages(deduped);
+      console.log("ðŸ“¨ Loaded merged messages:", deduped.length);
+    };
+
+    if (emergencyReportId) {
+      console.log(`ðŸ“¡ Listening to emergency thread: EmergencyReports/${emergencyReportId}/messages`);
+      const emergencyMessagesRef = collection(db, "EmergencyReports", emergencyReportId, "messages");
+      const emergencyQ = query(emergencyMessagesRef, orderBy("timestamp", "asc"));
+
+      unsubscribers.push(
+        onSnapshot(
+          emergencyQ,
+          (snapshot) => {
+            emergencyMessages = snapshot.docs.map((chatDoc) => ({
+              id: `er-${chatDoc.id}`,
+              ...(chatDoc.data() as Omit<Message, "id">),
+            }));
+            mergeAndSetMessages();
+          },
+          (error) => {
+            console.error("âŒ Error listening to emergency messages:", error);
+          }
+        )
+      );
+    }
+
+    // Bridge dispatch support chat too so admin and personnel always interact on same thread.
+    if (dispatchId) {
+      console.log(`ðŸ“¡ Listening to dispatch thread: dispatches/${dispatchId}/messages`);
+      const dispatchMessagesRef = collection(db, "dispatches", dispatchId, "messages");
+      const dispatchQ = query(dispatchMessagesRef, orderBy("timestamp", "asc"));
+
+      unsubscribers.push(
+        onSnapshot(
+          dispatchQ,
+          (snapshot) => {
+            dispatchMessages = snapshot.docs.map((chatDoc) => ({
+              id: `dp-${chatDoc.id}`,
+              ...(chatDoc.data() as Omit<Message, "id">),
+            }));
+            mergeAndSetMessages();
+          },
+          (error) => {
+            console.error("âŒ Error listening to dispatch messages:", error);
+          }
+        )
+      );
+    }
+
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
   }, [emergencyReportId, dispatchId]);
 
   const scrollToBottom = () => {
@@ -159,9 +207,8 @@ export default function TICEmergencyModal({
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    const chatId = dispatchId || emergencyReportId;
-    if (!inputMessage.trim() || !chatId || !user) {
-      console.warn("⚠️ Cannot send - missing data:", {
+    if (!inputMessage.trim() || (!emergencyReportId && !dispatchId) || !user) {
+      console.warn("âš ï¸ Cannot send - missing data:", {
         hasMessage: !!inputMessage.trim(),
         hasDispatchId: !!dispatchId,
         hasReportId: !!emergencyReportId,
@@ -171,17 +218,13 @@ export default function TICEmergencyModal({
     }
 
     if (!roleChecked) {
-      console.warn("⚠️ Role not yet checked, please wait...");
+      console.warn("âš ï¸ Role not yet checked, please wait...");
       alert("Please wait, checking your permissions...");
       return;
     }
 
     setSending(true);
     try {
-      const collectionName = dispatchId ? "dispatches" : "EmergencyReports";
-      console.log("📤 Sending message as:", { isAdmin, userDisplayName, userId: user.uid, collection: collectionName, chatId });
-      const messagesRef = collection(db, collectionName, chatId, "messages");
-      
       const messageData = {
         senderId: user.uid,
         senderName: userDisplayName || "Unknown",
@@ -191,13 +234,28 @@ export default function TICEmergencyModal({
         isAdmin: isAdmin,
       };
       
-      console.log("📦 Message data:", messageData);
-      await addDoc(messagesRef, messageData);
+      console.log("ðŸ“¦ Message data:", messageData);
 
-      console.log("✅ Message sent successfully");
+      const writes: Promise<any>[] = [];
+
+      // Primary emergency thread
+      if (emergencyReportId) {
+        const emergencyMessagesRef = collection(db, "EmergencyReports", emergencyReportId, "messages");
+        writes.push(addDoc(emergencyMessagesRef, messageData));
+      }
+
+      // Bridge dispatch support chat thread so mobile/web stay in sync
+      if (dispatchId) {
+        const dispatchMessagesRef = collection(db, "dispatches", dispatchId, "messages");
+        writes.push(addDoc(dispatchMessagesRef, messageData));
+      }
+
+      await Promise.all(writes);
+
+      console.log("âœ… Message sent successfully");
       setInputMessage("");
     } catch (error: any) {
-      console.error("❌ Error sending message:", error);
+      console.error("âŒ Error sending message:", error);
       console.error("Error code:", error?.code);
       console.error("Error message:", error?.message);
       alert(`Failed to send message: ${error?.message || "Unknown error"}`);
@@ -208,14 +266,14 @@ export default function TICEmergencyModal({
 
   const handleResolveEmergency = async () => {
     if (!emergencyReportId) {
-      console.error("❌ No emergency report ID provided:", { emergencyReportId, dispatchId });
+      console.error("âŒ No emergency report ID provided:", { emergencyReportId, dispatchId });
       alert("Cannot resolve: No emergency report ID. Please close and try again.");
       return;
     }
 
     // Validate the ID is a string and not empty
     if (typeof emergencyReportId !== 'string' || emergencyReportId.trim() === '') {
-      console.error("❌ Invalid emergency report ID:", emergencyReportId);
+      console.error("âŒ Invalid emergency report ID:", emergencyReportId);
       alert("Cannot resolve: Invalid emergency report ID.");
       return;
     }
@@ -228,8 +286,8 @@ export default function TICEmergencyModal({
 
     setResolving(true);
     try {
-      console.log("✅ Resolving emergency report:", emergencyReportId);
-      console.log("📍 Document path:", `EmergencyReports/${emergencyReportId}`);
+      console.log("âœ… Resolving emergency report:", emergencyReportId);
+      console.log("ðŸ“ Document path:", `EmergencyReports/${emergencyReportId}`);
       
       const reportRef = doc(db, "EmergencyReports", emergencyReportId);
       await updateDoc(reportRef, {
@@ -238,13 +296,13 @@ export default function TICEmergencyModal({
         resolvedBy: user?.uid,
       });
 
-      console.log("✅ Emergency resolved successfully");
+      console.log("âœ… Emergency resolved successfully");
       alert("Emergency marked as RESOLVED successfully!");
       onClose();
     } catch (error: any) {
-      console.error("❌ Error resolving emergency:", error);
-      console.error("❌ Error code:", error?.code);
-      console.error("❌ Report ID was:", emergencyReportId);
+      console.error("âŒ Error resolving emergency:", error);
+      console.error("âŒ Error code:", error?.code);
+      console.error("âŒ Report ID was:", emergencyReportId);
       alert(`Failed to resolve emergency: ${error?.message || "Unknown error"}`);
     } finally {
       setResolving(false);
@@ -258,6 +316,28 @@ export default function TICEmergencyModal({
       minute: "2-digit",
     });
   };
+
+  const emergencyInfoText = [
+    `ðŸš¨ EMERGENCY REPORTED: ${truckCodename}`,
+    location ? `Location: ${location.label || "Unknown"} (${location.lat}, ${location.lng})` : "",
+    description ? `Description: ${description}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const emergencyInfoMessage: Message | null = emergencyReportId
+    ? {
+        id: "emergency-info",
+        senderId: "system-emergency",
+        senderName: "Emergency System",
+        text: emergencyInfoText,
+        timestamp: null,
+        imageUrl: imageUrl || "",
+        isAdmin: false,
+      }
+    : null;
+
+  const displayMessages = emergencyInfoMessage ? [emergencyInfoMessage, ...messages] : messages;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
@@ -291,7 +371,7 @@ export default function TICEmergencyModal({
                   )}
                   {dispatchId && (
                     <span className="px-2 py-1 bg-blue-500/30 backdrop-blur-sm text-white text-xs font-bold rounded-full border border-white/30">
-                      📡 Dispatch Chat
+                      ðŸ“¡ Dispatch Chat
                     </span>
                   )}
                 </div>
@@ -299,7 +379,7 @@ export default function TICEmergencyModal({
                   Emergency Communication
                 </h2>
                 <p className="text-sm text-red-100 font-semibold mt-0.5">
-                  {truckCodename} • {personnelName}
+                  {truckCodename} â€¢ {personnelName}
                 </p>
               </div>
             </div>
@@ -313,7 +393,7 @@ export default function TICEmergencyModal({
                 emergencyReportId && (
                   <button
                     onClick={() => {
-                      console.log("🔘 Modal Resolve button clicked. Report ID:", emergencyReportId, "Type:", typeof emergencyReportId);
+                      console.log("ðŸ”˜ Modal Resolve button clicked. Report ID:", emergencyReportId, "Type:", typeof emergencyReportId);
                       handleResolveEmergency();
                     }}
                     disabled={resolving}
@@ -352,11 +432,11 @@ export default function TICEmergencyModal({
                       ? 'bg-blue-100 text-blue-700 border border-blue-300' 
                       : 'bg-green-100 text-green-700 border border-green-300'
                   }`}>
-                    {isAdmin ? '🛡️ Admin' : '👤 Personnel'} • {userDisplayName}
+                    {isAdmin ? 'ðŸ›¡ï¸ Admin' : 'ðŸ‘¤ Personnel'} â€¢ {userDisplayName}
                   </span>
                 ) : (
                   <span className="text-xs font-bold px-3 py-1 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-300 animate-pulse">
-                    ⏳ Checking permissions...
+                    â³ Checking permissions...
                   </span>
                 )}
               </div>
@@ -370,7 +450,7 @@ export default function TICEmergencyModal({
 
         {/* Chat Messages Area */}
         <div className="h-96 overflow-y-auto bg-gradient-to-b from-slate-50 to-slate-100 p-6 space-y-4 custom-scrollbar">
-          {messages.length === 0 ? (
+          {displayMessages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
                 <span className="material-symbols-outlined text-slate-300 text-5xl mb-3">chat</span>
@@ -379,7 +459,7 @@ export default function TICEmergencyModal({
               </div>
             </div>
           ) : (
-            messages.map((msg) => (
+            displayMessages.map((msg) => (
               <div
                 key={msg.id}
                 className={`flex ${msg.isAdmin ? "justify-end" : "justify-start"} animate-slide-up`}
@@ -461,7 +541,7 @@ export default function TICEmergencyModal({
             <div className="flex items-center gap-2 text-xs">
               <span className={`h-2 w-2 rounded-full ${messages.length >= 0 ? 'bg-green-500' : 'bg-gray-400'} animate-pulse`}></span>
               <span className="text-slate-400 font-mono">
-                {messages.length} msg • {dispatchId ? `Dispatch: ${dispatchId.slice(-6)}` : `Report: ${emergencyReportId?.slice(-6)}`}
+                {messages.length} msg â€¢ {dispatchId ? `Dispatch: ${dispatchId.slice(-6)}` : `Report: ${emergencyReportId?.slice(-6)}`}
               </span>
             </div>
           </div>

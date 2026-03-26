@@ -13,8 +13,8 @@
 
 // ===== CLOUDINARY CONFIGURATION =====
 // Replace these with your actual Cloudinary credentials
-const CLOUDINARY_CLOUD_NAME = "dm61xnbqz"; // Your cloud name
-const CLOUDINARY_UPLOAD_PRESET = "AFP-Logistics"; // Your upload preset
+const CLOUDINARY_CLOUD_NAME: string = "dm61xnbqz"; // Your cloud name
+const CLOUDINARY_UPLOAD_PRESET: string = "AFP-Logistics"; // Your upload preset
 
 // Cloudinary API endpoint
 const CLOUDINARY_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;

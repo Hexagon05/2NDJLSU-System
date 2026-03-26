@@ -8,6 +8,7 @@ import DispatchDetailModal from "@/components/DispatchDetailModal";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity-logger";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
+import DispatchChatHub from "@/components/DispatchChatHub";
 import {
   collection,
   query,
@@ -86,7 +87,7 @@ export default function HistoryPage() {
             year: "numeric",
             hour: "2-digit",
             minute: "2-digit",
-          }) : "—",
+          }) : "â€”",
           officer: data.officer || "Unassigned",
           status: data.status || "Pending",
           createdAt,
@@ -355,6 +356,7 @@ export default function HistoryPage() {
             </div>
             <div className="flex items-center gap-4">
               <NotificationsDropdown userEmail={user?.email ?? undefined} />
+              <DispatchChatHub />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>
@@ -493,7 +495,7 @@ export default function HistoryPage() {
 
             {/* Pagination */}
             <div className="flex items-center justify-between">
-              <p className="text-sm text-slate-500 font-medium">Showing 1–{filteredData.length} of {historyData.length} records</p>
+              <p className="text-sm text-slate-500 font-medium">Showing 1â€“{filteredData.length} of {historyData.length} records</p>
               <div className="flex gap-1.5">
                 <button className="flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors text-sm font-medium">
                   <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>chevron_left</span>

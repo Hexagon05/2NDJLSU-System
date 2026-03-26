@@ -27,6 +27,8 @@ export default function EmergencyMonitor() {
   const [emergencyReport, setEmergencyReport] = useState<EmergencyReport | null>(null);
   const [dismissedEmergencies, setDismissedEmergencies] = useState<Set<string>>(new Set());
 
+  const isResolvedStatus = (status?: string) => (status || "").trim().toLowerCase() === "resolved";
+
   useEffect(() => {
     // Don't show emergency on login page or if user not authenticated
     if (!user || pathname === "/login") return;
@@ -45,7 +47,7 @@ export default function EmergencyMonitor() {
 
       // Filter to only active (non-resolved) emergencies
       const activeReports = allReports.filter(
-        (report) => report.status !== 'resolved'
+        (report) => !isResolvedStatus(report.status)
       );
 
       // Find the first active emergency report that hasn't been dismissed

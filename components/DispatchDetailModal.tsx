@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { doc, updateDoc, Timestamp } from "firebase/firestore";
+import { doc, Timestamp, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import dynamic from "next/dynamic";
 
@@ -36,7 +36,7 @@ interface Props {
 }
 
 function formatTime(ts: Timestamp | null): string {
-    if (!ts) return "—";
+    if (!ts) return "â€”";
     return ts.toDate().toLocaleString("en-PH", {
         month: "long",
         day: "numeric",
@@ -125,6 +125,15 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const handleSuccessClose = () => {
         setShowSuccessModal(false);
         onClose(); // Close main modal
+    };
+
+    const handleOpenDispatchChat = () => {
+        if (!dispatch.id) return;
+        window.dispatchEvent(
+            new CustomEvent("open-dispatch-chat", {
+                detail: { dispatchId: dispatch.id },
+            })
+        );
     };
 
     // Check if dispatch can be completed (must be in progress or en route)
@@ -362,6 +371,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             )}
                         </div>
                     </div>
+
                 </div>
 
                 {/* Footer */}
@@ -387,6 +397,13 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         )}
                     </div>
                     <div className="flex gap-3">
+                        <button
+                            onClick={handleOpenDispatchChat}
+                            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold text-sm shadow-lg hover:from-blue-600 hover:to-indigo-700 transition-all active:scale-95 flex items-center gap-2"
+                        >
+                            <span className="material-symbols-outlined text-sm">chat</span>
+                            Open Chat
+                        </button>
                         {canCancel && (
                             <button
                                 onClick={handleCancelDispatch}

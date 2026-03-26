@@ -8,6 +8,7 @@ import { OpenStreetMap } from "@/components/OpenStreetMap";
 import DispatchModal from "@/components/DispatchModal";
 import DispatchDetailModal from "@/components/DispatchDetailModal";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
+import DispatchChatHub from "@/components/DispatchChatHub";
 import {
   collection,
   query,
@@ -49,7 +50,7 @@ interface Vehicle {
 }
 
 function formatTime(ts: Timestamp | null): string {
-  if (!ts) return "—";
+  if (!ts) return "â€”";
   return ts.toDate().toLocaleString("en-PH", {
     month: "short",
     day: "numeric",
@@ -275,7 +276,7 @@ export default function Dashboard() {
   };
 
   const getRelativeTime = (timestamp: Timestamp | null): string => {
-    if (!timestamp) return "—";
+    if (!timestamp) return "â€”";
     const now = new Date();
     const date = timestamp.toDate();
     const diffMs = now.getTime() - date.getTime();
@@ -293,7 +294,7 @@ export default function Dashboard() {
   const activities = dispatches.map((d) => {
     const statusInfo = getStatusIcon(d.status);
     return {
-      type: `${d.dispatchId} • ${d.status}`,
+      type: `${d.dispatchId} â€¢ ${d.status}`,
       icon: statusInfo.icon,
       iconColor: statusInfo.iconColor,
       time: getRelativeTime(d.createdAt),
@@ -439,7 +440,7 @@ export default function Dashboard() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
             </div>
             <div className="flex items-center gap-3">
-              {/* ── Create Dispatch Button ── */}
+              {/* â”€â”€ Create Dispatch Button â”€â”€ */}
               <button
                 onClick={() => setShowDispatchModal(true)}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:from-emerald-400 hover:to-green-500 hover:scale-[1.03] active:scale-95 transition-all duration-200"
@@ -449,6 +450,7 @@ export default function Dashboard() {
               </button>
 
               <NotificationsDropdown userEmail={user?.email} />
+              <DispatchChatHub />
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 <div className="text-right">
                   <p className="text-sm font-semibold text-slate-900">{user?.email}</p>
@@ -500,7 +502,7 @@ export default function Dashboard() {
                       <h2 className="text-xl font-bold text-slate-900 leading-tight tracking-tight">Real-Time Vehicle Tracking</h2>
                       <p className="text-xs text-slate-500 font-semibold flex items-center gap-1.5 mt-1">
                         <span className="material-symbols-outlined text-blue-500" style={{ fontSize: "0.875rem" }}>location_on</span>
-                        GPS Monitoring — Palawan Area
+                        GPS Monitoring â€” Palawan Area
                       </p>
                     </div>
                   </div>

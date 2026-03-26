@@ -1,4 +1,4 @@
-// 🚨 EMERGENCY BUTTON CODE FOR MOBILE APP
+// ðŸš¨ EMERGENCY BUTTON CODE FOR MOBILE APP
 // Add this to: ui/screens/DispatchScreen.kt
 
 // ============================================
@@ -10,7 +10,7 @@ Spacer(modifier = Modifier.height(8.dp))
 
 // Emergency Button
 EnhancedActionChip(
-    label = "🚨 EMERGENCY - TIC",
+    label = "ðŸš¨ EMERGENCY - TIC",
     color = Color(0xFFDC2626),        // Red-600
     bgColor = Color(0xFFFEE2E2),      // Red-50
     onClick = { 
@@ -57,9 +57,9 @@ EnhancedActionChip(
                     modifier = Modifier.weight(1f)
                 )
                 
-                // 🚨 NEW: Emergency Button
+                // ðŸš¨ NEW: Emergency Button
                 EnhancedActionChip(
-                    label = "🚨 EMERGENCY",
+                    label = "ðŸš¨ EMERGENCY",
                     color = Color(0xFFDC2626),
                     bgColor = Color(0xFFFEE2E2),
                     onClick = { 
@@ -135,11 +135,11 @@ fun updateDispatchStatus(newStatus: String) {
         .document(currentDispatch.id)
         .update("status", newStatus)
         .addOnSuccessListener {
-            Log.d("AuthViewModel", "✅ Status updated to: $newStatus")
+            Log.d("AuthViewModel", "âœ… Status updated to: $newStatus")
             // Optionally show a toast/snackbar to user
         }
         .addOnFailureListener { e ->
-            Log.e("AuthViewModel", "❌ Error updating status", e)
+            Log.e("AuthViewModel", "âŒ Error updating status", e)
             // Optionally show error message to user
         }
 }
@@ -253,9 +253,9 @@ fun ColumnScope.ActiveDispatchContent(
                     modifier = Modifier.weight(1f)
                 )
                 
-                // 🚨 EMERGENCY BUTTON
+                // ðŸš¨ EMERGENCY BUTTON
                 EnhancedActionChip(
-                    label = "🚨 EMERGENCY",
+                    label = "ðŸš¨ EMERGENCY",
                     color = Color(0xFFDC2626),
                     bgColor = Color(0xFFFEE2E2),
                     onClick = { 
@@ -310,7 +310,7 @@ fun DispatchScreen(
         ActiveDispatchContent(
             dispatch = activeDispatch!!,
             onConfirmDelivery = onConfirmDelivery,
-            authViewModel = authViewModel  // ⚠️ ADD THIS PARAMETER
+            authViewModel = authViewModel  // âš ï¸ ADD THIS PARAMETER
         )
     }
 }
@@ -320,7 +320,7 @@ fun DispatchScreen(
 fun ColumnScope.ActiveDispatchContent(
     dispatch: Dispatch,
     onConfirmDelivery: () -> Unit,
-    authViewModel: AuthViewModel  // ⚠️ ADD THIS PARAMETER
+    authViewModel: AuthViewModel  // âš ï¸ ADD THIS PARAMETER
 ) {
     // ... existing code with emergency button ...
 }
@@ -331,7 +331,7 @@ fun ColumnScope.ActiveDispatchContent(
 
 // 1. Build and run the mobile app
 // 2. Accept a dispatch
-// 3. Click the "🚨 EMERGENCY" button
+// 3. Click the "ðŸš¨ EMERGENCY" button
 // 4. Check Firebase Console: dispatches/{id}/status should be "emergency"
 // 5. Check web app Emergency Alerts page: dispatch should appear
 // 6. Click the emergency in web app: modal should open
@@ -344,7 +344,7 @@ fun ColumnScope.ActiveDispatchContent(
 Before:
 dispatches/abc123 {
   dispatchId: "DIS-0001",
-  status: "Ongoing",  ← Current status
+  status: "Ongoing",  â† Current status
   truck: "BRAVO-12",
   ...
 }
@@ -352,7 +352,7 @@ dispatches/abc123 {
 After clicking emergency button:
 dispatches/abc123 {
   dispatchId: "DIS-0001",
-  status: "emergency",  ← Updated to emergency
+  status: "emergency",  â† Updated to emergency
   truck: "BRAVO-12",
   ...
 }

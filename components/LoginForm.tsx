@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { auth } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 
 export default function LoginForm() {
   const [email, setEmail] = useState("");
@@ -25,7 +27,27 @@ export default function LoginForm() {
         return;
       }
 
-      await signInWithEmailAndPassword(auth, email, password);
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+
+      // Allow only accounts explicitly registered as admin in Firestore users collection.
+      const userDocRef = doc(db, "users", credential.user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (!userDocSnap.exists()) {
+        await auth.signOut();
+        setError("Access denied. This account is not allowed to use the admin web app.");
+        setLoading(false);
+        return;
+      }
+
+      const userData = userDocSnap.data() as { role?: string };
+      if (userData.role !== "admin") {
+        await auth.signOut();
+        setError("Access denied. Only admin accounts can access the web app.");
+        setLoading(false);
+        return;
+      }
+
       router.push("/dashboard");
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -165,7 +187,7 @@ export default function LoginForm() {
 
           {/* Copyright */}
           <div className="mt-6 border-t border-white/10 pt-5 text-center text-xs text-slate-600">
-            <p className="font-semibold text-slate-500">Logistics Support Unit — Palawan</p>
+            <p className="font-semibold text-slate-500">Logistics Support Unit â€” Palawan</p>
             <p className="mt-0.5">AFPSC 2025</p>
           </div>
         </div>
