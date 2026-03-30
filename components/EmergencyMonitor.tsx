@@ -41,8 +41,9 @@ export default function EmergencyMonitor() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const allReports = snapshot.docs.map((doc) => ({
-        id: doc.id,
         ...(doc.data() as Omit<EmergencyReport, "id">),
+        // Keep the actual Firestore document ID as source of truth.
+        id: doc.id,
       }));
 
       // Filter to only active (non-resolved) emergencies
@@ -84,6 +85,7 @@ export default function EmergencyMonitor() {
       truckCodename={emergencyReport.type || "EMERGENCY"}
       personnelName={emergencyReport.senderName || emergencyReport.reportedBy || "Field Personnel"}
       emergencyReportId={emergencyReport.id}
+      dispatchId={emergencyReport.dispatchId}
       location={emergencyReport.location}
       description={emergencyReport.description}
       imageUrl={emergencyReport.imageUrl}

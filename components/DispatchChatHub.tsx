@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { arrayUnion, collection, doc, onSnapshot, orderBy, query, Timestamp, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
+import { MODAL_LOCK_EVENT, getModalLockCount, isAnyAppModalOpen } from "@/lib/modal-lock";
 
 type ChatMessage = {
   senderId: string;
@@ -53,6 +54,7 @@ export default function DispatchChatHub() {
   const [restoredState, setRestoredState] = useState(false);
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [panelPosition, setPanelPosition] = useState<{ top: number; left: number }>({ top: 72, left: 16 });
+  const [isBlockedByModal, setIsBlockedByModal] = useState(false);
 
   const hideOnRoutes = pathname === "/login" || pathname === "/setup-admin";
 
@@ -72,6 +74,27 @@ export default function DispatchChatHub() {
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!isMounted) return;
+
+    const syncModalState = () => {
+      setIsBlockedByModal(isAnyAppModalOpen());
+    };
+
+    syncModalState();
+
+    const handleModalLockChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ count?: number }>;
+      const count = Number(customEvent.detail?.count ?? getModalLockCount());
+      setIsBlockedByModal(Number.isFinite(count) && count > 0);
+    };
+
+    window.addEventListener(MODAL_LOCK_EVENT, handleModalLockChange as EventListener);
+    return () => {
+      window.removeEventListener(MODAL_LOCK_EVENT, handleModalLockChange as EventListener);
+    };
+  }, [isMounted]);
 
   useEffect(() => {
     if (!isMounted || restoredState) return;
@@ -96,7 +119,15 @@ export default function DispatchChatHub() {
   }, [activeDispatchId, isMounted, restoredState]);
 
   useEffect(() => {
+    if (isBlockedByModal) {
+      setPanelOpen(false);
+      setActiveDispatchId(null);
+    }
+  }, [isBlockedByModal]);
+
+  useEffect(() => {
     const handleOpenChat = (event: Event) => {
+      if (isAnyAppModalOpen()) return;
       const customEvent = event as CustomEvent<{ dispatchId?: string }>;
       const incomingDispatchId = customEvent.detail?.dispatchId;
       if (!incomingDispatchId) return;
@@ -191,7 +222,7 @@ export default function DispatchChatHub() {
 
   if (!user || hideOnRoutes) return null;
 
-  const overlays = isMounted
+  const overlays = isMounted && !isBlockedByModal
     ? createPortal(
         <>
           {panelOpen && (
@@ -291,8 +322,12 @@ export default function DispatchChatHub() {
       <div className="relative z-30">
         <button
           ref={triggerRef}
-          onClick={() => setPanelOpen((prev) => !prev)}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+          onClick={() => {
+            if (isBlockedByModal) return;
+            setPanelOpen((prev) => !prev);
+          }}
+          disabled={isBlockedByModal}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>chat</span>
           Dispatch Chat

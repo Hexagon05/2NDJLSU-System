@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { doc, Timestamp, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import dynamic from "next/dynamic";
+import * as XLSX from "xlsx";
+import { getItemClassLookup, resolveSupplyClassLabel, resolveSupplyItemLabel, resolveSupplyQuantityValue } from "@/lib/supply-class-resolver";
+import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
 
 // Dynamic import for Leaflet
 const LeafletMap = dynamic<{ lat: number; lng: number; onChange?: (lat: number, lng: number) => void }>(
@@ -63,6 +66,13 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [showCancelConfirmModal, setShowCancelConfirmModal] = useState(false);
+
+    useEffect(() => {
+        acquireModalLock();
+        return () => {
+            releaseModalLock();
+        };
+    }, []);
 
     // Mark dispatch as delivered/completed
     const handleCompleteDelivery = async () => {
@@ -134,6 +144,81 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 detail: { dispatchId: dispatch.id },
             })
         );
+    };
+
+    const handleExportDispatch = async () => {
+        try {
+            const itemClassLookup = await getItemClassLookup();
+            const detailsSheet = [
+                {
+                    "Dispatch ID": dispatch.dispatchId,
+                    "Firestore ID": dispatch.id,
+                    "Status": dispatch.status,
+                    "Officer": dispatch.officer,
+                    "Personnels": dispatch.personnels || "N/A",
+                    "Vehicle": dispatch.truck,
+                    "Created At": formatTime(dispatch.createdAt),
+                    "Start Landmark": dispatch.startLocation?.label || "N/A",
+                    "Start Latitude": dispatch.startLocation?.lat ?? "N/A",
+                    "Start Longitude": dispatch.startLocation?.lng ?? "N/A",
+                    "Delivery Landmark": deliveryLocation?.label || "N/A",
+                    "Delivery Latitude": deliveryLocation?.lat ?? "N/A",
+                    "Delivery Longitude": deliveryLocation?.lng ?? "N/A",
+                    "Additional Notes": dispatch.othersNote || "N/A",
+                },
+            ];
+
+            const supplyRows = dispatch.supplies.length
+                ? dispatch.supplies
+                      .slice()
+                      .sort((left, right) => {
+                          const categoryOrder = resolveSupplyClassLabel(left, itemClassLookup).localeCompare(
+                              resolveSupplyClassLabel(right, itemClassLookup)
+                          );
+                          if (categoryOrder !== 0) return categoryOrder;
+                          return resolveSupplyItemLabel(left).localeCompare(resolveSupplyItemLabel(right));
+                      })
+                      .map((supply, index) => ({
+                          "No.": index + 1,
+                          "Supply Class": resolveSupplyClassLabel(supply, itemClassLookup),
+                          "Supply Item": resolveSupplyItemLabel(supply),
+                          "Quantity": resolveSupplyQuantityValue(supply),
+                      }))
+                : [{ "No.": 1, "Supply Class": "N/A", "Supply Item": "No supplies listed", "Quantity": 0 }];
+
+            const workbook = XLSX.utils.book_new();
+            const detailsWorksheet = XLSX.utils.json_to_sheet(detailsSheet);
+            const suppliesWorksheet = XLSX.utils.json_to_sheet(supplyRows);
+
+            detailsWorksheet["!cols"] = [
+                { wch: 18 },
+                { wch: 28 },
+                { wch: 14 },
+                { wch: 28 },
+                { wch: 28 },
+                { wch: 18 },
+                { wch: 24 },
+                { wch: 30 },
+                { wch: 14 },
+                { wch: 14 },
+                { wch: 30 },
+                { wch: 16 },
+                { wch: 16 },
+                { wch: 40 },
+            ];
+
+            suppliesWorksheet["!cols"] = [{ wch: 6 }, { wch: 24 }, { wch: 32 }, { wch: 12 }];
+
+            XLSX.utils.book_append_sheet(workbook, detailsWorksheet, "Dispatch Details");
+            XLSX.utils.book_append_sheet(workbook, suppliesWorksheet, "Supplies");
+
+            const datePart = new Date().toISOString().split("T")[0];
+            const safeDispatchId = dispatch.dispatchId.replace(/[^a-z0-9_-]+/gi, "_");
+            XLSX.writeFile(workbook, `Dispatch_${safeDispatchId}_${datePart}.xlsx`);
+        } catch (error) {
+            console.error("Error exporting dispatch:", error);
+            alert("Failed to export dispatch details. Please try again.");
+        }
     };
 
     // Check if dispatch can be completed (must be in progress or en route)
@@ -397,6 +482,13 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         )}
                     </div>
                     <div className="flex gap-3">
+                        <button
+                            onClick={handleExportDispatch}
+                            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold text-sm shadow-lg hover:from-emerald-600 hover:to-green-700 transition-all active:scale-95 flex items-center gap-2"
+                        >
+                            <span className="material-symbols-outlined text-sm">download</span>
+                            Export Dispatch
+                        </button>
                         <button
                             onClick={handleOpenDispatchChat}
                             className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold text-sm shadow-lg hover:from-blue-600 hover:to-indigo-700 transition-all active:scale-95 flex items-center gap-2"

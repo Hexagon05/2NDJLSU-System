@@ -252,6 +252,22 @@ export default function HistoryPage() {
     return hasTextMatch && hasMonthMatch && hasYearMatch && hasDateMatch;
   });
 
+  const RECORDS_PER_PAGE = 10;
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / RECORDS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * RECORDS_PER_PAGE;
+  const paginatedData = filteredData.slice(startIndex, startIndex + RECORDS_PER_PAGE);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, monthFilter, yearFilter, dateFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
       {selectedDispatch && (
@@ -450,7 +466,7 @@ export default function HistoryPage() {
                       </td>
                     </tr>
                   ) : (
-                    filteredData.map((record, index) => (
+                    paginatedData.map((record, index) => (
                       <tr
                         key={record.id}
                         className="hover:bg-slate-50 transition-colors duration-200 animate-fade-in"
@@ -495,15 +511,24 @@ export default function HistoryPage() {
 
             {/* Pagination */}
             <div className="flex items-center justify-between">
-              <p className="text-sm text-slate-500 font-medium">Showing 1â€“{filteredData.length} of {historyData.length} records</p>
+              <p className="text-sm text-slate-500 font-medium">
+                {filteredData.length === 0
+                  ? "Showing 0-0 of 0 records"
+                  : `Showing ${startIndex + 1}-${Math.min(startIndex + RECORDS_PER_PAGE, filteredData.length)} of ${filteredData.length} records`}
+              </p>
               <div className="flex gap-1.5">
-                <button className="flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors text-sm font-medium">
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeCurrentPage === 1}
+                  className="flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                >
                   <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>chevron_left</span>
                 </button>
-                {[1, 2, 3, 4, 5, 6].map((page) => (
+
+                {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((page) => (
                   <button
                     key={page}
-                    className={`px-3.5 py-2 rounded-xl text-sm font-semibold transition-all ${currentPage === page
+                    className={`px-3.5 py-2 rounded-xl text-sm font-semibold transition-all ${safeCurrentPage === page
                       ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/30"
                       : "border border-slate-200 text-slate-600 hover:bg-slate-100"
                       }`}
@@ -512,7 +537,12 @@ export default function HistoryPage() {
                     {page}
                   </button>
                 ))}
-                <button className="flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors text-sm font-medium">
+
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                  className="flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                >
                   <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>chevron_right</span>
                 </button>
               </div>

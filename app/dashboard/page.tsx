@@ -23,6 +23,8 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity-logger";
+import * as XLSX from "xlsx";
+import { getItemClassLookup, resolveSupplyClassLabel, resolveSupplyItemLabel, resolveSupplyQuantityValue } from "@/lib/supply-class-resolver";
 
 interface Dispatch {
   id: string;
@@ -50,7 +52,7 @@ interface Vehicle {
 }
 
 function formatTime(ts: Timestamp | null): string {
-  if (!ts) return "â€”";
+  if (!ts) return "-";
   return ts.toDate().toLocaleString("en-PH", {
     month: "short",
     day: "numeric",
@@ -276,7 +278,7 @@ export default function Dashboard() {
   };
 
   const getRelativeTime = (timestamp: Timestamp | null): string => {
-    if (!timestamp) return "â€”";
+    if (!timestamp) return "-";
     const now = new Date();
     const date = timestamp.toDate();
     const diffMs = now.getTime() - date.getTime();
@@ -294,7 +296,7 @@ export default function Dashboard() {
   const activities = dispatches.map((d) => {
     const statusInfo = getStatusIcon(d.status);
     return {
-      type: `${d.dispatchId} â€¢ ${d.status}`,
+      type: `${d.dispatchId} - ${d.status}`,
       icon: statusInfo.icon,
       iconColor: statusInfo.iconColor,
       time: getRelativeTime(d.createdAt),
@@ -335,6 +337,76 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Error cancelling dispatch:", error);
       alert("Failed to cancel dispatch. Please try again.");
+    }
+  };
+
+  const handleExportRecentDispatches = async () => {
+    try {
+      const itemClassLookup = await getItemClassLookup();
+      const rows = dispatches.flatMap((dispatch, index) => {
+        const supplies = Array.isArray(dispatch.supplies) ? dispatch.supplies : [];
+
+        if (supplies.length === 0) {
+          return [
+            {
+              "No.": index + 1,
+              "Dispatch ID": dispatch.dispatchId,
+              "Status": dispatch.status,
+              "Officer": dispatch.officer,
+              "Personnels": dispatch.personnels || "N/A",
+              "Vehicle": dispatch.truck || "N/A",
+              "Landmark": dispatch.deliveryLocation?.label || dispatch.location?.label || "Location unknown",
+              "Latitude": dispatch.deliveryLocation?.lat ?? dispatch.location?.lat ?? "N/A",
+              "Longitude": dispatch.deliveryLocation?.lng ?? dispatch.location?.lng ?? "N/A",
+              "Created At": formatTime(dispatch.createdAt),
+              "Supply Class": "N/A",
+              "Supply Item": "No supplies listed",
+              "Quantity": 0,
+            },
+          ];
+        }
+
+        return supplies.map((supply) => ({
+          "No.": index + 1,
+          "Dispatch ID": dispatch.dispatchId,
+          "Status": dispatch.status,
+          "Officer": dispatch.officer,
+          "Personnels": dispatch.personnels || "N/A",
+          "Vehicle": dispatch.truck || "N/A",
+          "Landmark": dispatch.deliveryLocation?.label || dispatch.location?.label || "Location unknown",
+          "Latitude": dispatch.deliveryLocation?.lat ?? dispatch.location?.lat ?? "N/A",
+          "Longitude": dispatch.deliveryLocation?.lng ?? dispatch.location?.lng ?? "N/A",
+          "Created At": formatTime(dispatch.createdAt),
+          "Supply Class": resolveSupplyClassLabel(supply, itemClassLookup),
+          "Supply Item": resolveSupplyItemLabel(supply),
+          "Quantity": resolveSupplyQuantityValue(supply),
+        }));
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      worksheet["!cols"] = [
+        { wch: 6 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 30 },
+        { wch: 30 },
+        { wch: 18 },
+        { wch: 34 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 22 },
+        { wch: 22 },
+        { wch: 30 },
+        { wch: 10 },
+      ];
+
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Recent Dispatches");
+      const datePart = new Date().toISOString().split("T")[0];
+      XLSX.writeFile(workbook, `Recent_Dispatches_${datePart}.xlsx`);
+    } catch (error) {
+      console.error("Error exporting recent dispatches:", error);
+      alert("Failed to export recent dispatches. Please try again.");
     }
   };
 
@@ -502,7 +574,7 @@ export default function Dashboard() {
                       <h2 className="text-xl font-bold text-slate-900 leading-tight tracking-tight">Real-Time Vehicle Tracking</h2>
                       <p className="text-xs text-slate-500 font-semibold flex items-center gap-1.5 mt-1">
                         <span className="material-symbols-outlined text-blue-500" style={{ fontSize: "0.875rem" }}>location_on</span>
-                        GPS Monitoring â€” Palawan Area
+                        GPS Monitoring - Palawan Area
                       </p>
                     </div>
                   </div>
@@ -618,6 +690,13 @@ export default function Dashboard() {
                     <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: "1.25rem" }}>receipt_long</span>
                     <h2 className="text-base font-bold text-slate-900">Recent Dispatches</h2>
                   </div>
+                  <button
+                    onClick={handleExportRecentDispatches}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100 transition-colors"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "0.95rem" }}>download</span>
+                    Export
+                  </button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar">

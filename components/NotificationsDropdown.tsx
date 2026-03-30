@@ -25,19 +25,58 @@ interface NotificationsDropdownProps {
   userEmail?: string | null;
 }
 
-export default function NotificationsDropdown({ userEmail: _userEmail }: NotificationsDropdownProps) {
+function getActivityMillis(activity: Activity): number {
+  return activity.timestamp?.toMillis?.() ?? 0;
+}
+
+function getLatestActivityMillis(activities: Activity[]): number {
+  if (activities.length === 0) return 0;
+  return activities.reduce((latest, activity) => Math.max(latest, getActivityMillis(activity)), 0);
+}
+
+export default function NotificationsDropdown({ userEmail }: NotificationsDropdownProps) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, right: 16 });
+  const [lastSeenMillis, setLastSeenMillis] = useState(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
+  const storageKey = `notifications_last_seen_ms_${String(userEmail || "anonymous").trim().toLowerCase()}`;
+
+  const persistLastSeen = (value: number) => {
+    setLastSeenMillis(value);
+    if (!mounted) return;
+    window.localStorage.setItem(storageKey, String(value));
+  };
+
+  const markAllAsSeen = (currentActivities: Activity[]) => {
+    const latest = getLatestActivityMillis(currentActivities);
+    persistLastSeen(Math.max(lastSeenMillis, latest));
+  };
+
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const stored = window.localStorage.getItem(storageKey);
+    const parsed = Number(stored);
+    setLastSeenMillis(Number.isFinite(parsed) ? parsed : 0);
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey) return;
+      const next = Number(event.newValue);
+      setLastSeenMillis(Number.isFinite(next) ? next : 0);
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [mounted, storageKey]);
 
   useEffect(() => {
     const loadActivities = async () => {
@@ -52,6 +91,12 @@ export default function NotificationsDropdown({ userEmail: _userEmail }: Notific
     const interval = setInterval(loadActivities, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    if (loading) return;
+    markAllAsSeen(activities);
+  }, [dropdownOpen, loading, activities]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -93,7 +138,7 @@ export default function NotificationsDropdown({ userEmail: _userEmail }: Notific
     };
   }, [dropdownOpen]);
 
-  const hasUnread = activities.length > 0;
+  const hasUnread = activities.some((activity) => getActivityMillis(activity) > lastSeenMillis);
 
   const dropdownPanel =
     dropdownOpen && mounted
@@ -199,7 +244,15 @@ export default function NotificationsDropdown({ userEmail: _userEmail }: Notific
     <div ref={wrapperRef} className="relative">
       <button
         ref={buttonRef}
-        onClick={() => setDropdownOpen(!dropdownOpen)}
+        onClick={() => {
+          setDropdownOpen((prev) => {
+            const next = !prev;
+            if (next) {
+              markAllAsSeen(activities);
+            }
+            return next;
+          });
+        }}
         className="relative p-2.5 bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 rounded-xl transition-all duration-200 group shadow-sm hover:shadow-md border border-blue-200"
       >
         <span

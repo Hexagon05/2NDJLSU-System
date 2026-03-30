@@ -17,6 +17,7 @@ import {
 import { db } from "@/lib/firebase";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
 import DispatchChatHub from "@/components/DispatchChatHub";
+import AppDialog from "@/components/AppDialog";
 
 interface EmergencyReport {
   id: string;
@@ -43,6 +44,19 @@ export default function EmergencyAlerts() {
   const [activePage, setActivePage] = useState(1);
   const [resolvedSearch, setResolvedSearch] = useState("");
   const [resolvedPage, setResolvedPage] = useState(1);
+  const [pendingResolveReportId, setPendingResolveReportId] = useState<string | null>(null);
+  const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
+  const [dialogState, setDialogState] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    tone: "default" | "success" | "danger";
+  }>({
+    open: false,
+    title: "",
+    message: "",
+    tone: "default",
+  });
   const ACTIVE_PER_PAGE = 5;
   const RESOLVED_PER_PAGE = 5;
 
@@ -148,7 +162,12 @@ export default function EmergencyAlerts() {
     
     if (!report.id) {
       console.error("âŒ Cannot open report without ID:", report);
-      alert("Error: This report has no ID. Please refresh the page.");
+      setDialogState({
+        open: true,
+        title: "Invalid Report",
+        message: "This report has no ID. Please refresh the page.",
+        tone: "danger",
+      });
       return;
     }
     
@@ -163,9 +182,7 @@ export default function EmergencyAlerts() {
   };
 
   // Resolve an emergency report
-  const handleResolveReport = async (reportId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    
+  const handleResolveReport = async (reportId: string) => {
     console.log("ðŸ” handleResolveReport called with:", { 
       reportId, 
       type: typeof reportId, 
@@ -177,15 +194,14 @@ export default function EmergencyAlerts() {
     
     if (!reportId || typeof reportId !== 'string' || reportId.trim() === '') {
       console.error("âŒ Invalid report ID:", reportId);
-      alert("Cannot resolve: Invalid report ID. Please refresh the page and try again.");
+      setDialogState({
+        open: true,
+        title: "Unable to Resolve",
+        message: "Cannot resolve because the report ID is invalid. Please refresh the page and try again.",
+        tone: "danger",
+      });
       return;
     }
-    
-    const confirmed = confirm(
-      "Are you sure you want to mark this emergency as RESOLVED? This will update the status."
-    );
-
-    if (!confirmed) return;
 
     try {
       console.log("âœ… Resolving emergency report:", reportId);
@@ -199,12 +215,29 @@ export default function EmergencyAlerts() {
       });
       
       console.log("âœ… Emergency resolved successfully");
+      setDialogState({
+        open: true,
+        title: "Emergency Resolved",
+        message: "Emergency marked as RESOLVED successfully!",
+        tone: "success",
+      });
     } catch (error: any) {
       console.error("âŒ Error resolving emergency:", error);
       console.error("âŒ Error code:", error?.code);
       console.error("âŒ Report ID was:", reportId);
-      alert(`Failed to resolve emergency: ${error?.message || "Unknown error"}`);
+      setDialogState({
+        open: true,
+        title: "Resolve Failed",
+        message: `Failed to resolve emergency: ${error?.message || "Unknown error"}`,
+        tone: "danger",
+      });
     }
+  };
+
+  const requestResolveReport = (reportId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPendingResolveReportId(reportId);
+    setResolveDialogOpen(true);
   };
 
   const handleLogout = async () => {
@@ -325,6 +358,45 @@ export default function EmergencyAlerts() {
           isResolved={isResolvedStatus(selectedReport.status)}
         />
       )}
+
+      <AppDialog
+        open={resolveDialogOpen}
+        title="Confirm Resolution"
+        message="Are you sure you want to mark this emergency as RESOLVED? This will update the status."
+        tone="danger"
+        confirmText="Yes, Resolve"
+        cancelText="Cancel"
+        onCancel={() => {
+          setResolveDialogOpen(false);
+          setPendingResolveReportId(null);
+        }}
+        onConfirm={async () => {
+          if (!pendingResolveReportId) {
+            setResolveDialogOpen(false);
+            setDialogState({
+              open: true,
+              title: "Unable to Resolve",
+              message: "Missing report ID. Please try again.",
+              tone: "danger",
+            });
+            return;
+          }
+
+          setResolveDialogOpen(false);
+          await handleResolveReport(pendingResolveReportId);
+          setPendingResolveReportId(null);
+        }}
+      />
+
+      <AppDialog
+        open={dialogState.open}
+        title={dialogState.title}
+        message={dialogState.message}
+        tone={dialogState.tone}
+        confirmText="OK"
+        hideCancel
+        onConfirm={() => setDialogState({ open: false, title: "", message: "", tone: "default" })}
+      />
 
       {/* Sidebar */}
       <div
@@ -647,10 +719,15 @@ export default function EmergencyAlerts() {
                                 onClick={(e) => {
                                   console.log("ðŸ”˜ Resolve button clicked for report:", report.id, "Type:", typeof report.id);
                                   if (!report.id) {
-                                    alert("Error: Report has no ID. Please refresh the page.");
+                                    setDialogState({
+                                      open: true,
+                                      title: "Invalid Report",
+                                      message: "Report has no ID. Please refresh the page.",
+                                      tone: "danger",
+                                    });
                                     return;
                                   }
-                                  handleResolveReport(report.id, e);
+                                  requestResolveReport(report.id, e);
                                 }}
                                 className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100 transition-colors border border-green-200 hover:border-green-300"
                               >
@@ -671,7 +748,7 @@ export default function EmergencyAlerts() {
             {activeReports.length > 0 && (
               <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
                 <p className="text-xs text-slate-500 font-medium">
-                  Showing {(activeSafePage - 1) * ACTIVE_PER_PAGE + 1}â€“{Math.min(activeSafePage * ACTIVE_PER_PAGE, activeReports.length)} of {activeReports.length}
+                  Showing {(activeSafePage - 1) * ACTIVE_PER_PAGE + 1}-{Math.min(activeSafePage * ACTIVE_PER_PAGE, activeReports.length)} of {activeReports.length}
                 </p>
                 <div className="flex items-center gap-1">
                   <button
@@ -831,7 +908,7 @@ export default function EmergencyAlerts() {
                 {filteredResolvedReports.length > 0 && (
                   <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
                     <p className="text-xs text-slate-500 font-medium">
-                      Showing {(resolvedSafePage - 1) * RESOLVED_PER_PAGE + 1}â€“{Math.min(resolvedSafePage * RESOLVED_PER_PAGE, filteredResolvedReports.length)} of {filteredResolvedReports.length}
+                      Showing {(resolvedSafePage - 1) * RESOLVED_PER_PAGE + 1}-{Math.min(resolvedSafePage * RESOLVED_PER_PAGE, filteredResolvedReports.length)} of {filteredResolvedReports.length}
                     </p>
                     <div className="flex items-center gap-1">
                       <button

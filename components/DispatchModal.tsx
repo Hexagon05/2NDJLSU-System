@@ -14,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity-logger";
+import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
 import dynamic from "next/dynamic";
 
 // Dynamic import for Leaflet (avoids SSR errors)
@@ -95,6 +96,13 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const [dbPersonnels, setDbPersonnels] = useState<{ id: string; name: string }[]>([]);
     const [approvedRequisitions, setApprovedRequisitions] = useState<RequisitionOption[]>([]);
     const [loadingRequisitions, setLoadingRequisitions] = useState(false);
+
+    useEffect(() => {
+        acquireModalLock();
+        return () => {
+            releaseModalLock();
+        };
+    }, []);
 
     // Computed: All blowbagets checked
     const hasBlowbagets = Object.values(blowbagetsChecklist).every(checked => checked);

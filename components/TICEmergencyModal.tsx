@@ -14,6 +14,8 @@ import {
   getDoc,
   updateDoc,
 } from "firebase/firestore";
+import AppDialog from "@/components/AppDialog";
+import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
 
 interface Message {
   id: string;
@@ -57,7 +59,27 @@ export default function TICEmergencyModal({
   const [userDisplayName, setUserDisplayName] = useState("");
   const [roleChecked, setRoleChecked] = useState(false);
   const [resolving, setResolving] = useState(false);
+  const [showResolveConfirm, setShowResolveConfirm] = useState(false);
+  const [resultDialog, setResultDialog] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    tone: "default" | "success" | "danger";
+    closeParentOnConfirm?: boolean;
+  }>({
+    open: false,
+    title: "",
+    message: "",
+    tone: "default",
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    acquireModalLock();
+    return () => {
+      releaseModalLock();
+    };
+  }, []);
 
   // Debug: Log IDs when component mounts or props change
   useEffect(() => {
@@ -267,22 +289,26 @@ export default function TICEmergencyModal({
   const handleResolveEmergency = async () => {
     if (!emergencyReportId) {
       console.error("âŒ No emergency report ID provided:", { emergencyReportId, dispatchId });
-      alert("Cannot resolve: No emergency report ID. Please close and try again.");
+      setResultDialog({
+        open: true,
+        title: "Unable to Resolve",
+        message: "Cannot resolve because the emergency report ID is missing. Please close and try again.",
+        tone: "danger",
+      });
       return;
     }
 
     // Validate the ID is a string and not empty
     if (typeof emergencyReportId !== 'string' || emergencyReportId.trim() === '') {
       console.error("âŒ Invalid emergency report ID:", emergencyReportId);
-      alert("Cannot resolve: Invalid emergency report ID.");
+      setResultDialog({
+        open: true,
+        title: "Unable to Resolve",
+        message: "Cannot resolve because the emergency report ID is invalid.",
+        tone: "danger",
+      });
       return;
     }
-
-    const confirmed = confirm(
-      "Are you sure you want to mark this emergency as RESOLVED? This will close the emergency report."
-    );
-
-    if (!confirmed) return;
 
     setResolving(true);
     try {
@@ -297,15 +323,44 @@ export default function TICEmergencyModal({
       });
 
       console.log("âœ… Emergency resolved successfully");
-      alert("Emergency marked as RESOLVED successfully!");
-      onClose();
+      setResultDialog({
+        open: true,
+        title: "Emergency Resolved",
+        message: "Emergency marked as RESOLVED successfully!",
+        tone: "success",
+        closeParentOnConfirm: true,
+      });
     } catch (error: any) {
       console.error("âŒ Error resolving emergency:", error);
       console.error("âŒ Error code:", error?.code);
       console.error("âŒ Report ID was:", emergencyReportId);
-      alert(`Failed to resolve emergency: ${error?.message || "Unknown error"}`);
+      setResultDialog({
+        open: true,
+        title: "Resolve Failed",
+        message: `Failed to resolve emergency: ${error?.message || "Unknown error"}`,
+        tone: "danger",
+      });
     } finally {
       setResolving(false);
+    }
+  };
+
+  const handleResolveButtonClick = () => {
+    setShowResolveConfirm(true);
+  };
+
+  const handleCloseResultDialog = () => {
+    const shouldCloseParent = resultDialog.closeParentOnConfirm;
+    setResultDialog({
+      open: false,
+      title: "",
+      message: "",
+      tone: "default",
+      closeParentOnConfirm: false,
+    });
+
+    if (shouldCloseParent) {
+      onClose();
     }
   };
 
@@ -325,9 +380,11 @@ export default function TICEmergencyModal({
     .filter(Boolean)
     .join("\n");
 
-  const emergencyInfoMessage: Message | null = emergencyReportId
+  const hasEmergencyContext = Boolean(location || description || imageUrl);
+
+  const emergencyInfoMessage: Message | null = hasEmergencyContext
     ? {
-        id: "emergency-info",
+        id: `emergency-info-${emergencyReportId || dispatchId || "local"}`,
         senderId: "system-emergency",
         senderName: "Emergency System",
         text: emergencyInfoText,
@@ -394,7 +451,7 @@ export default function TICEmergencyModal({
                   <button
                     onClick={() => {
                       console.log("ðŸ”˜ Modal Resolve button clicked. Report ID:", emergencyReportId, "Type:", typeof emergencyReportId);
-                      handleResolveEmergency();
+                      handleResolveButtonClick();
                     }}
                     disabled={resolving}
                     className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
@@ -547,6 +604,31 @@ export default function TICEmergencyModal({
           </div>
         </form>
       </div>
+
+      <AppDialog
+        open={showResolveConfirm}
+        title="Confirm Resolution"
+        message="Are you sure you want to mark this emergency as RESOLVED? This will close the emergency report."
+        tone="danger"
+        confirmText={resolving ? "Resolving..." : "Yes, Resolve"}
+        cancelText="Cancel"
+        confirmDisabled={resolving}
+        onCancel={() => setShowResolveConfirm(false)}
+        onConfirm={async () => {
+          setShowResolveConfirm(false);
+          await handleResolveEmergency();
+        }}
+      />
+
+      <AppDialog
+        open={resultDialog.open}
+        title={resultDialog.title}
+        message={resultDialog.message}
+        tone={resultDialog.tone}
+        confirmText="OK"
+        hideCancel
+        onConfirm={handleCloseResultDialog}
+      />
 
       <style jsx>{`
         @keyframes scale-in {
