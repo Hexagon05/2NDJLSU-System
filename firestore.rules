@@ -86,6 +86,14 @@ service cloud.firestore {
                       && request.resource.data.senderId == request.auth.uid; 
         allow update, delete: if false; // Audit protection
       }
+
+      // Proof of Delivery Images (Field Personnel Upload, All Can Read)
+      match /proofOfDelivery/{docId} {
+        allow read: if isAuthenticated();
+        // Field personnel and web admins can upload proof images
+        allow create: if isAuthenticated();
+        allow update, delete: if false; // Immutable audit trail
+      }
     }
 
     // --- Emergency Reports (Field Personnel Can Create) ---

@@ -15,6 +15,7 @@ import {
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity-logger";
 import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
+import { getItemClassLookup, resolveSupplyClassLabel } from "@/lib/supply-class-resolver";
 import dynamic from "next/dynamic";
 
 // Dynamic import for Leaflet (avoids SSR errors)
@@ -44,7 +45,13 @@ const normalizeLookupValue = (value: unknown): string =>
 
 const isDeliveredStatus = (status: unknown): boolean => {
     const normalized = normalizeLookupValue(status).replace(/[_-]+/g, " ");
-    return normalized === "delivered" || normalized === "completed";
+    return (
+        normalized === "delivered" ||
+        normalized === "completed" ||
+        normalized === "successful dispatch" ||
+        normalized === "sucessful dispatch" ||
+        normalized === "success dispatch"
+    );
 };
 
 interface Props {
@@ -169,11 +176,21 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
             .filter((s) => s.item.length > 0);
     };
 
+    const applySupplyClassCategories = async (supplies: Supply[]): Promise<Supply[]> => {
+        if (!supplies.length) return supplies;
+
+        const itemClassLookup = await getItemClassLookup();
+        return supplies.map((supply) => ({
+            ...supply,
+            category: resolveSupplyClassLabel(supply, itemClassLookup),
+        }));
+    };
+
     // Fetch released requisitions from Firestore
     const fetchApprovedRequisitionsInitial = async () => {
         setLoadingRequisitions(true);
         try {
-            // Exclude requisitions/POs already completed by delivered dispatches.
+            // Exclude requisitions/POs already completed by delivered/successful dispatches.
             const deliveredDispatchRefs = new Set<string>();
             const dispatchesSnap = await getDocs(collection(db, "dispatches"));
             dispatchesSnap.forEach((dispatchDoc) => {
@@ -182,6 +199,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
 
                 [
                     data.requisitionNumber,
+                    data.requisitionId,
                     data.requisitionNo,
                     data.requestNumber,
                     data.poNumber,
@@ -196,8 +214,8 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
 
             const requisitionSnap = await getDocs(collection(db, "requisitions"));
 
-            const requisitionList = requisitionSnap.docs
-                .map(d => {
+            const requisitionList = await Promise.all(
+                requisitionSnap.docs.map(async (d) => {
                     const data = d.data() as any;
                     const rawStatus =
                         data.status ||
@@ -220,7 +238,9 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                         data.inventoryItems,
                     ].filter(Array.isArray) as any[][];
 
-                    const embeddedSupplies = normalizeSupplies(embeddedLists.flat());
+                    const embeddedSupplies = await applySupplyClassCategories(
+                        normalizeSupplies(embeddedLists.flat())
+                    );
 
                     return {
                         id: d.id,
@@ -241,11 +261,14 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                         embeddedSupplies,
                     };
                 })
+            );
+
+            const filteredRequisitionList = requisitionList
                 .filter((r) => r.isReleased)
                 .map(({ id, requisitionNumber, requestedByName, embeddedSupplies }) => ({ id, requisitionNumber, requestedByName, embeddedSupplies }))
                 .filter((r) => !deliveredDispatchRefs.has(normalizeLookupValue(r.requisitionNumber)));
 
-            setApprovedRequisitions(requisitionList);
+            setApprovedRequisitions(filteredRequisitionList);
         } catch (err) {
             console.error("Error fetching released requisitions:", err);
             setApprovedRequisitions([]);
@@ -276,14 +299,16 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
         try {
             // 1) Prefer items already embedded in requisition doc
             if (selectedRequisition.embeddedSupplies.length > 0) {
-                setFetchedSupplies(selectedRequisition.embeddedSupplies);
+                setFetchedSupplies(await applySupplyClassCategories(selectedRequisition.embeddedSupplies));
                 setError("");
                 return;
             }
 
             // 2) Fallback: requisitions/{id}/items subcollection
             const subItemsSnap = await getDocs(collection(db, "requisitions", selectedRequisition.id, "items"));
-            const subSupplies = normalizeSupplies(subItemsSnap.docs.map((d) => d.data()));
+            const subSupplies = await applySupplyClassCategories(
+                normalizeSupplies(subItemsSnap.docs.map((d) => d.data()))
+            );
             if (subSupplies.length > 0) {
                 setFetchedSupplies(subSupplies);
                 setError("");
@@ -294,15 +319,17 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
             const itemsSnap = await getDocs(query(collection(db, "items"), orderBy("name", "asc")));
             const items = itemsSnap.docs.map(doc => doc.data());
 
-            const requisitionSupplies = normalizeSupplies(
-                items
-                .filter((item: any) =>
-                    item.requisitionNumber === selectedRequisition.requisitionNumber ||
-                    item.requisitionNo === selectedRequisition.requisitionNumber ||
-                    item.requisition === selectedRequisition.requisitionNumber ||
-                    item.requestNumber === selectedRequisition.requisitionNumber ||
-                    item.poNumber === selectedRequisition.requisitionNumber ||
-                    item.po === selectedRequisition.requisitionNumber
+            const requisitionSupplies = await applySupplyClassCategories(
+                normalizeSupplies(
+                    items
+                    .filter((item: any) =>
+                        item.requisitionNumber === selectedRequisition.requisitionNumber ||
+                        item.requisitionNo === selectedRequisition.requisitionNumber ||
+                        item.requisition === selectedRequisition.requisitionNumber ||
+                        item.requestNumber === selectedRequisition.requisitionNumber ||
+                        item.poNumber === selectedRequisition.requisitionNumber ||
+                        item.po === selectedRequisition.requisitionNumber
+                    )
                 )
             );
 
@@ -837,6 +864,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
         setSubmitting(true);
 
         try {
+            const suppliesWithResolvedClass = await applySupplyClassCategories(fetchedSupplies);
             const counterRef = doc(db, "meta", "dispatchCounter");
             const dispatchRef = doc(collection(db, "dispatches"));
             let createdDispatchId = "";
@@ -873,8 +901,9 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     personnels: personnels.trim(),
                     personnelIncluded: personnelIncluded.trim(),
                     truck,
-                    supplies: fetchedSupplies,
+                    supplies: suppliesWithResolvedClass,
                     requisitionNumber: requisitionNumber.trim(),
+                    requisitionId: requisitionNumber.trim(),
                     poNumber: requisitionNumber.trim(),
                     othersNote: othersNote.trim(),
                     blowbagetsChecklist,

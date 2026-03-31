@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { doc, Timestamp, updateDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, Timestamp, updateDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import dynamic from "next/dynamic";
 import * as XLSX from "xlsx";
@@ -20,6 +20,9 @@ const LeafletMap = dynamic<{ lat: number; lng: number; onChange?: (lat: number, 
 interface Dispatch {
     id: string;
     dispatchId: string;
+    requisitionNumber?: string;
+    requisitionId?: string;
+    poNumber?: string;
     officer: string;
     personnels: string;
     truck: string;
@@ -29,6 +32,7 @@ interface Dispatch {
     deliveryLocation?: { lat: number; lng: number; label: string };
     supplies: { category: string; item: string; quantity: number }[];
     othersNote?: string;
+    proofOfDelivery?: unknown;
     createdAt: Timestamp | null;
 }
 
@@ -36,6 +40,14 @@ interface Props {
     dispatch: Dispatch;
     onClose: () => void;
     onSuccess?: () => void;
+}
+
+interface DeliveryProofImage {
+    id: string;
+    imageUrl: string;
+    senderName: string;
+    timestamp: Timestamp | null;
+    caption?: string;
 }
 
 function formatTime(ts: Timestamp | null): string {
@@ -56,6 +68,7 @@ const STATUS_STYLES: Record<string, string> = {
     "En Route": "bg-violet-100 text-violet-700 border-violet-200",
     Ongoing: "bg-orange-100 text-orange-700 border-orange-200",
     Delivered: "bg-cyan-100 text-cyan-700 border-cyan-200",
+    "Successful Dispatch": "bg-emerald-100 text-emerald-700 border-emerald-200",
     Completed: "bg-emerald-100 text-emerald-700 border-emerald-200",
     Cancelled: "bg-rose-100 text-rose-700 border-rose-200",
 };
@@ -63,14 +76,39 @@ const STATUS_STYLES: Record<string, string> = {
 export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Props) {
     const [completing, setCompleting] = useState(false);
     const [canceling, setCanceling] = useState(false);
+    const [confirmingDelivery, setConfirmingDelivery] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [successTitle, setSuccessTitle] = useState("Delivery Marked as Completed Successfully!");
+    const [successMessage, setSuccessMessage] = useState("The dispatch has been updated and will now appear in the history records.");
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [showCancelConfirmModal, setShowCancelConfirmModal] = useState(false);
+    const [showProofModal, setShowProofModal] = useState(false);
+    const [loadingProofImages, setLoadingProofImages] = useState(false);
+    const [proofImages, setProofImages] = useState<DeliveryProofImage[]>([]);
+    const [itemClassLookup, setItemClassLookup] = useState<Map<string, string>>(new Map());
 
     useEffect(() => {
         acquireModalLock();
         return () => {
             releaseModalLock();
+        };
+    }, []);
+
+    useEffect(() => {
+        let mounted = true;
+
+        getItemClassLookup()
+            .then((lookup) => {
+                if (mounted) {
+                    setItemClassLookup(lookup);
+                }
+            })
+            .catch((error) => {
+                console.error("Error loading supply class lookup:", error);
+            });
+
+        return () => {
+            mounted = false;
         };
     }, []);
 
@@ -94,6 +132,8 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 completedAt: Timestamp.now(),
             });
 
+            setSuccessTitle("Delivery Marked as Completed Successfully!");
+            setSuccessMessage("The dispatch has been updated and will now appear in the history records.");
             setShowSuccessModal(true);
             onSuccess?.(); // Refresh parent data
         } catch (error: any) {
@@ -101,6 +141,176 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             alert(`Failed to complete delivery: ${error?.message || "Unknown error"}`);
         } finally {
             setCompleting(false);
+        }
+    };
+
+    const loadDeliveryProofImages = async () => {
+        if (!dispatch.id) {
+            setProofImages([]);
+            return;
+        }
+
+        setLoadingProofImages(true);
+        try {
+            let data: any = null;
+
+            // Primary lookup by Firestore document id
+            const dispatchRef = doc(db, "dispatches", dispatch.id);
+            const dispatchSnap = await getDoc(dispatchRef);
+            if (dispatchSnap.exists()) {
+                data = dispatchSnap.data();
+            }
+
+            // Fallback lookup by business dispatchId value
+            if (!data && dispatch.dispatchId) {
+                const dispatchQuery = query(
+                    collection(db, "dispatches"),
+                    where("dispatchId", "==", dispatch.dispatchId),
+                    limit(1)
+                );
+                const dispatchQuerySnap = await getDocs(dispatchQuery);
+                if (!dispatchQuerySnap.empty) {
+                    data = dispatchQuerySnap.docs[0].data();
+                }
+            }
+
+            if (!data) {
+                setProofImages([]);
+                return;
+            }
+
+            const proofData = data?.proofOfDelivery ?? dispatch.proofOfDelivery;
+            const fallbackTimestamp = (data?.deliveredAt as Timestamp) || (data?.successfulDispatchAt as Timestamp) || (data?.createdAt as Timestamp) || null;
+            const fallbackSender = String(data?.receiverName || data?.personnels || dispatch.personnels || "Field Personnel");
+            const fallbackCaption = String(data?.deliveryNote || "").trim();
+            const aggregated: DeliveryProofImage[] = [];
+
+            const toImageUrl = (entry: any): string => {
+                if (typeof entry === "string") return entry.trim();
+                if (entry && typeof entry === "object") {
+                    return String(entry.proofOfDelivery || entry.imageUrl || entry.url || entry.secure_url || "").trim();
+                }
+                return "";
+            };
+
+            // Handle if proofOfDelivery is a string (single image URL)
+            if (typeof proofData === "string" && proofData.trim()) {
+                aggregated.push({
+                    id: "proof-0",
+                    imageUrl: proofData.trim(),
+                    senderName: fallbackSender,
+                    timestamp: fallbackTimestamp,
+                    caption: fallbackCaption,
+                });
+            }
+
+            // Handle if proofOfDelivery is an array (multiple images)
+            if (Array.isArray(proofData) && proofData.length > 0) {
+                const images = proofData
+                    .map((entry: any, idx: number) => {
+                        const imageUrl = toImageUrl(entry);
+                        if (!imageUrl) return null;
+
+                        return {
+                            id: `proof-${idx}`,
+                            imageUrl,
+                            senderName: fallbackSender,
+                            timestamp: fallbackTimestamp,
+                            caption: fallbackCaption,
+                        } as DeliveryProofImage;
+                    })
+                    .filter((entry): entry is DeliveryProofImage => !!entry);
+
+                aggregated.push(...images);
+            }
+
+            // Handle if proofOfDelivery is an object
+            if (proofData && typeof proofData === "object" && !Array.isArray(proofData)) {
+                const imageUrl = toImageUrl(proofData);
+                if (imageUrl) {
+                    aggregated.push({
+                        id: "proof-object",
+                        imageUrl,
+                        senderName: String(proofData?.uploadedBy || proofData?.senderName || fallbackSender),
+                        timestamp: (proofData?.timestamp as Timestamp) || fallbackTimestamp,
+                        caption: String(proofData?.description || proofData?.caption || fallbackCaption).trim(),
+                    });
+                }
+            }
+
+            // Fallback: read proofOfDelivery subcollection only when doc-level field has no images.
+            if (aggregated.length === 0) {
+                try {
+                    const proofRef = collection(db, "dispatches", dispatch.id, "proofOfDelivery");
+                    const proofSnap = await getDocs(query(proofRef, orderBy("timestamp", "desc")));
+                    const subcollectionImages = proofSnap.docs
+                        .map((proofDoc) => {
+                            const proofEntry = proofDoc.data() as any;
+                            const imageUrl = String(proofEntry?.proofOfDelivery || proofEntry?.imageUrl || "").trim();
+                            if (!imageUrl) return null;
+
+                            return {
+                                id: `sub-${proofDoc.id}`,
+                                imageUrl,
+                                senderName: String(proofEntry?.uploadedBy || proofEntry?.senderName || fallbackSender),
+                                timestamp: (proofEntry?.timestamp as Timestamp) || fallbackTimestamp,
+                                caption: String(proofEntry?.description || proofEntry?.caption || fallbackCaption).trim(),
+                            } as DeliveryProofImage;
+                        })
+                        .filter((entry): entry is DeliveryProofImage => !!entry);
+
+                    aggregated.push(...subcollectionImages);
+                } catch (subcollectionError) {
+                    console.warn("Unable to read proofOfDelivery subcollection, using document-level proof only:", subcollectionError);
+                }
+            }
+
+            const dedupedImages = Array.from(
+                new Map(aggregated.map((image) => [image.imageUrl, image])).values()
+            );
+
+            if (dedupedImages.length > 0) {
+                setProofImages(dedupedImages);
+                return;
+            }
+
+            // No proof images found
+            setProofImages([]);
+        } catch (error) {
+            console.error("Error loading delivery proof images:", error);
+            setProofImages([]);
+        } finally {
+            setLoadingProofImages(false);
+        }
+    };
+
+    const handleOpenProofModal = async () => {
+        setShowProofModal(true);
+        await loadDeliveryProofImages();
+    };
+
+    const handleConfirmSuccessfulDispatch = async () => {
+        if (!dispatch.id) return;
+
+        setConfirmingDelivery(true);
+        try {
+            const dispatchRef = doc(db, "dispatches", dispatch.id);
+            await updateDoc(dispatchRef, {
+                status: "Successful Dispatch",
+                successfulDispatchAt: Timestamp.now(),
+                deliveryProofCount: proofImages.length,
+            });
+
+            setShowProofModal(false);
+            setSuccessTitle("Dispatch Confirmed Successfully");
+            setSuccessMessage("The dispatch is now marked as Successful Dispatch.");
+            setShowSuccessModal(true);
+            onSuccess?.();
+        } catch (error: any) {
+            console.error("Error confirming successful dispatch:", error);
+            alert(`Failed to confirm delivery: ${error?.message || "Unknown error"}`);
+        } finally {
+            setConfirmingDelivery(false);
         }
     };
 
@@ -153,6 +363,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 {
                     "Dispatch ID": dispatch.dispatchId,
                     "Firestore ID": dispatch.id,
+                    "PO/Requisition ID": dispatch.requisitionNumber || dispatch.requisitionId || dispatch.poNumber || "N/A",
                     "Status": dispatch.status,
                     "Officer": dispatch.officer,
                     "Personnels": dispatch.personnels || "N/A",
@@ -223,8 +434,11 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
     // Check if dispatch can be completed (must be in progress or en route)
     const canComplete = ["En Route", "Ongoing", "Approved"].includes(dispatch.status);
+    const canConfirmDelivery = dispatch.status === "Delivered";
+    const canViewProof = dispatch.status === "Successful Dispatch";
     const canCancel = ["Pending", "Approved", "En Route", "Ongoing"].includes(dispatch.status);
     const deliveryLocation = dispatch.deliveryLocation || dispatch.location;
+    const requisitionId = dispatch.requisitionNumber || dispatch.requisitionId || dispatch.poNumber || "N/A";
 
     return (
         <>
@@ -270,9 +484,9 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-emerald-100 mb-4">
                                 <span className="material-symbols-outlined text-emerald-600 text-3xl">check_circle</span>
                             </div>
-                            <h3 className="text-xl font-bold text-slate-900 mb-2">Delivery Marked as Completed Successfully!</h3>
+                            <h3 className="text-xl font-bold text-slate-900 mb-2">{successTitle}</h3>
                             <p className="text-sm text-slate-600 mb-6">
-                                The dispatch has been updated and will now appear in the history records.
+                                {successMessage}
                             </p>
                             <button
                                 onClick={handleSuccessClose}
@@ -313,6 +527,85 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                     Confirm Cancel
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delivery Proof Modal */}
+            {showProofModal && (
+                <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/75 backdrop-blur-sm" onClick={() => setShowProofModal(false)} />
+                    <div className="relative w-full max-w-4xl rounded-2xl bg-white shadow-2xl border border-slate-200 animate-fade-in overflow-hidden">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-900">Proof of Delivery</h3>
+                                <p className="text-xs text-slate-500">Images uploaded by personnel for dispatch verification</p>
+                            </div>
+                            <button onClick={() => setShowProofModal(false)} className="rounded-lg p-2 hover:bg-slate-200 text-slate-500">
+                                <span className="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+
+                        <div className="p-6 max-h-[60vh] overflow-y-auto">
+                            {loadingProofImages ? (
+                                <div className="py-16 text-center text-sm text-slate-500">Loading proof images...</div>
+                            ) : proofImages.length === 0 ? (
+                                <div className="py-16 text-center">
+                                    <p className="text-sm font-bold text-slate-700">No proof images found.</p>
+                                    <p className="text-xs text-slate-500 mt-1">Waiting for personnel to submit delivery proof images.</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {proofImages.map((proof) => (
+                                        <a
+                                            key={proof.id}
+                                            href={proof.imageUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="block rounded-xl border border-slate-200 overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow"
+                                        >
+                                            <img src={proof.imageUrl} alt="Delivery proof" className="w-full h-40 object-cover bg-slate-100" />
+                                            <div className="p-3 space-y-1">
+                                                <p className="text-xs font-bold text-slate-700 truncate">{proof.senderName}</p>
+                                                <p className="text-[11px] text-slate-500">{formatTime(proof.timestamp)}</p>
+                                                {proof.caption ? <p className="text-[11px] text-slate-600 line-clamp-2">{proof.caption}</p> : null}
+                                            </div>
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowProofModal(false)}
+                                className="px-5 py-2.5 rounded-xl bg-slate-200 text-slate-700 font-bold text-sm hover:bg-slate-300 transition-all"
+                            >
+                                Close
+                            </button>
+                            <button
+                                onClick={handleConfirmSuccessfulDispatch}
+                                disabled={!canConfirmDelivery || confirmingDelivery || loadingProofImages || proofImages.length === 0}
+                                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold text-sm hover:from-emerald-600 hover:to-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {!canConfirmDelivery ? (
+                                    <>
+                                        <span className="material-symbols-outlined text-sm">visibility</span>
+                                        Proof Verified
+                                    </>
+                                ) : confirmingDelivery ? (
+                                    <>
+                                        <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                                        Confirming...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="material-symbols-outlined text-sm">verified</span>
+                                        Confirm Delivery
+                                    </>
+                                )}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -395,7 +688,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             </div>
 
                             {/* Personnel & Vehicle Grid */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                 <div className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm flex items-center gap-4">
                                     <div className="h-12 w-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 shadow-sm">
                                         <span className="material-symbols-outlined">person</span>
@@ -412,6 +705,15 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                     <div>
                                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Assigned Unit</p>
                                         <p className="text-sm font-bold text-slate-700">{dispatch.truck}</p>
+                                    </div>
+                                </div>
+                                <div className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm flex items-center gap-4">
+                                    <div className="h-12 w-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 shadow-sm">
+                                        <span className="material-symbols-outlined">tag</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PO/Requisition ID</p>
+                                        <p className="text-sm font-bold text-slate-700">{requisitionId}</p>
                                     </div>
                                 </div>
                             </div>
@@ -433,7 +735,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                 <tbody className="divide-y divide-slate-50">
                                     {dispatch.supplies?.length > 0 ? dispatch.supplies.map((s, idx) => (
                                         <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                                            <td className="px-4 py-3 font-medium text-slate-500">{s.category}</td>
+                                            <td className="px-4 py-3 font-medium text-slate-500">{resolveSupplyClassLabel(s, itemClassLookup)}</td>
                                             <td className="px-4 py-3 font-bold text-slate-700">{s.item}</td>
                                             <td className="px-4 py-3 text-right">
                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs ring-1 ring-emerald-200">
@@ -478,6 +780,12 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-50 border border-cyan-200 rounded-xl">
                                 <span className="material-symbols-outlined text-cyan-600 text-sm">local_shipping</span>
                                 <span className="text-xs font-bold text-cyan-700">Delivered</span>
+                            </div>
+                        )}
+                        {dispatch.status === "Successful Dispatch" && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                                <span className="material-symbols-outlined text-emerald-600 text-sm">verified</span>
+                                <span className="text-xs font-bold text-emerald-700">Successful Dispatch</span>
                             </div>
                         )}
                     </div>
@@ -532,6 +840,24 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         Complete Delivery
                                     </>
                                 )}
+                            </button>
+                        )}
+                        {canConfirmDelivery && (
+                            <button
+                                onClick={handleOpenProofModal}
+                                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm shadow-lg hover:from-emerald-600 hover:to-teal-700 transition-all active:scale-95 flex items-center gap-2"
+                            >
+                                <span className="material-symbols-outlined text-sm">verified</span>
+                                Confirm Delivery
+                            </button>
+                        )}
+                        {canViewProof && (
+                            <button
+                                onClick={handleOpenProofModal}
+                                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-600 text-white font-bold text-sm shadow-lg hover:from-teal-600 hover:to-cyan-700 transition-all active:scale-95 flex items-center gap-2"
+                            >
+                                <span className="material-symbols-outlined text-sm">image</span>
+                                View Proof
                             </button>
                         )}
                         <button

@@ -29,6 +29,9 @@ import { getItemClassLookup, resolveSupplyClassLabel, resolveSupplyItemLabel, re
 interface Dispatch {
   id: string;
   dispatchId: string;
+  requisitionNumber?: string;
+  requisitionId?: string;
+  poNumber?: string;
   officer: string;
   personnels: string;
   truck: string;
@@ -744,6 +747,9 @@ export default function Dashboard() {
                               <span className="truncate">{d.deliveryLocation?.label || d.location?.label || "Location unknown"}</span>
                             </div>
                             <span className="whitespace-nowrap opacity-60 font-mono italic">{formatTime(d.createdAt).split(',')[0]}</span>
+                          </div>
+                          <div className="mt-2 text-[10px] text-slate-500 font-semibold">
+                            PO/Requisition: <span className="font-mono text-slate-700">{d.requisitionNumber || d.requisitionId || d.poNumber || "N/A"}</span>
                           </div>
                         </div>
                       ))}

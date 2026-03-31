@@ -21,6 +21,8 @@ import * as XLSX from "xlsx";
 interface HistoryRecord {
   id: string;
   dispatchId: string;
+  requisitionNumber?: string;
+  requisitionId?: string;
   personnels: string;
   vehicle: string;
   event: string;
@@ -34,8 +36,27 @@ interface HistoryRecord {
   timestamp: string;
   officer: string;
   status: string;
+  proofOfDelivery?: unknown;
   createdAt: Timestamp | null;
 }
+
+const normalizeHistoryStatus = (status: unknown): "Successful Dispatch" | "Cancelled" | null => {
+  const normalized = String(status ?? "").trim().toLowerCase().replace(/[_-]+/g, " ");
+
+  if (
+    normalized === "successful dispatch" ||
+    normalized === "sucessful dispatch" ||
+    normalized === "success dispatch"
+  ) {
+    return "Successful Dispatch";
+  }
+
+  if (normalized === "cancelled" || normalized === "canceled") {
+    return "Cancelled";
+  }
+
+  return null;
+};
 
 export default function HistoryPage() {
   const { user, loading, signOut } = useAuth();
@@ -57,23 +78,20 @@ export default function HistoryPage() {
       orderBy("createdAt", "desc")
     );
     const unsub = onSnapshot(q, (snap) => {
-      const records: HistoryRecord[] = snap.docs.map((d) => {
+      const mappedRecords: Array<HistoryRecord | null> = snap.docs.map((d): HistoryRecord | null => {
         const data = d.data();
         const createdAt = data.createdAt as Timestamp | null;
-        const eventMap: Record<string, string> = {
-          Pending: "Pending Approval",
-          Approved: "Approved by Personnel",
-          "En Route": "En Route to Location",
-          Delivered: "Delivered",
-          Completed: "Completed",
-        };
-        
+        const normalizedStatus = normalizeHistoryStatus(data.status);
+        if (!normalizedStatus) return null;
+
         return {
           id: d.id,
           dispatchId: data.dispatchId || "N/A",
+          requisitionNumber: data.requisitionNumber || data.requisitionId || data.poNumber || "N/A",
+          requisitionId: data.requisitionId || data.requisitionNumber || data.poNumber || "N/A",
           personnels: data.personnels || "",
           vehicle: data.truck || "Unknown",
-          event: eventMap[data.status] || data.status || "Update",
+          event: normalizedStatus,
           location: {
             lat: data.location?.lat || 0,
             lng: data.location?.lng || 0,
@@ -89,33 +107,18 @@ export default function HistoryPage() {
             minute: "2-digit",
           }) : "â€”",
           officer: data.officer || "Unassigned",
-          status: data.status || "Pending",
+          status: normalizedStatus,
+          proofOfDelivery: data.proofOfDelivery,
           createdAt,
         };
       });
+
+      const records: HistoryRecord[] = mappedRecords.filter((record): record is HistoryRecord => record !== null);
       setHistoryData(records);
       setFetchLoading(false);
     });
     return () => unsub();
   }, []);
-
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
-        <div className="text-center">
-          <span className="material-symbols-outlined animate-spin text-blue-400" style={{ fontSize: "3rem" }}>
-            progress_activity
-          </span>
-          <p className="mt-4 text-slate-300 font-medium tracking-wide">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    router.push("/login");
-    return null;
-  }
 
   const handleLogout = async () => {
     await signOut();
@@ -132,12 +135,8 @@ export default function HistoryPage() {
 
   const getEventBadge = (event: string) => {
     switch (event) {
-      case "Pending Approval": return "bg-amber-100 text-amber-800 border border-amber-200";
-      case "Approved by Personnel": return "bg-blue-100 text-blue-800 border border-blue-200";
-      case "En Route to Location": return "bg-violet-100 text-violet-800 border border-violet-200";
-      case "Delivered": return "bg-cyan-100 text-cyan-800 border border-cyan-200";
-      case "Completed": return "bg-emerald-100 text-emerald-800 border border-emerald-200";
-      case "Update": return "bg-slate-100 text-slate-800 border border-slate-200";
+      case "Successful Dispatch": return "bg-emerald-100 text-emerald-800 border border-emerald-200";
+      case "Cancelled": return "bg-rose-100 text-rose-800 border border-rose-200";
       default: return "bg-slate-100 text-slate-800 border border-slate-200";
     }
   };
@@ -268,6 +267,29 @@ export default function HistoryPage() {
     }
   }, [currentPage, totalPages]);
 
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/login");
+    }
+  }, [loading, user, router]);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+        <div className="text-center">
+          <span className="material-symbols-outlined animate-spin text-blue-400" style={{ fontSize: "3rem" }}>
+            progress_activity
+          </span>
+          <p className="mt-4 text-slate-300 font-medium tracking-wide">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
       {selectedDispatch && (
@@ -275,6 +297,8 @@ export default function HistoryPage() {
           dispatch={{
             id: selectedDispatch.id,
             dispatchId: selectedDispatch.dispatchId,
+            requisitionNumber: selectedDispatch.requisitionNumber,
+            requisitionId: selectedDispatch.requisitionId,
             officer: selectedDispatch.officer,
             personnels: selectedDispatch.personnels,
             truck: selectedDispatch.vehicle,
@@ -282,6 +306,7 @@ export default function HistoryPage() {
             location: selectedDispatch.location,
             supplies: selectedDispatch.supplies,
             othersNote: selectedDispatch.othersNote,
+            proofOfDelivery: selectedDispatch.proofOfDelivery,
             createdAt: selectedDispatch.createdAt,
           }}
           onClose={() => setSelectedDispatch(null)}
@@ -440,6 +465,7 @@ export default function HistoryPage() {
                 <thead className="bg-gradient-to-r from-slate-800 to-slate-900 text-white">
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Dispatch ID</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">PO/Requisition</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Vehicle</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Officer</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Event</th>
@@ -451,7 +477,7 @@ export default function HistoryPage() {
                 <tbody className="divide-y divide-slate-100">
                   {fetchLoading ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-12 text-center">
+                      <td colSpan={8} className="px-6 py-12 text-center">
                         <span className="material-symbols-outlined animate-spin text-emerald-400 inline-block" style={{ fontSize: "2rem" }}>
                           progress_activity
                         </span>
@@ -460,7 +486,7 @@ export default function HistoryPage() {
                     </tr>
                   ) : filteredData.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
+                      <td colSpan={8} className="px-6 py-12 text-center text-slate-400">
                         <span className="material-symbols-outlined block text-4xl mb-2">history</span>
                         <p>No dispatch history records found</p>
                       </td>
@@ -473,6 +499,7 @@ export default function HistoryPage() {
                         style={{ animationDelay: `${index * 0.07}s` }}
                       >
                         <td className="px-6 py-4 text-sm font-mono font-bold text-slate-900">{record.dispatchId}</td>
+                        <td className="px-6 py-4 text-sm font-mono text-slate-700">{record.requisitionNumber || "N/A"}</td>
                         <td className="px-6 py-4 text-sm font-bold text-slate-900">{record.vehicle}</td>
                         <td className="px-6 py-4 text-sm text-slate-600 flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "0.9rem" }}>person</span>
