@@ -373,7 +373,7 @@ export default function TICEmergencyModal({
   };
 
   const emergencyInfoText = [
-    `ðŸš¨ EMERGENCY REPORTED: ${truckCodename}`,
+    `EMERGENCY REPORTED: ${truckCodename}`,
     location ? `Location: ${location.label || "Unknown"} (${location.lat}, ${location.lng})` : "",
     description ? `Description: ${description}` : "",
   ]
@@ -428,7 +428,7 @@ export default function TICEmergencyModal({
                   )}
                   {dispatchId && (
                     <span className="px-2 py-1 bg-blue-500/30 backdrop-blur-sm text-white text-xs font-bold rounded-full border border-white/30">
-                      ðŸ“¡ Dispatch Chat
+                      Dispatch Chat
                     </span>
                   )}
                 </div>
@@ -436,7 +436,7 @@ export default function TICEmergencyModal({
                   Emergency Communication
                 </h2>
                 <p className="text-sm text-red-100 font-semibold mt-0.5">
-                  {truckCodename} â€¢ {personnelName}
+                  {truckCodename} - {personnelName}
                 </p>
               </div>
             </div>
@@ -489,11 +489,11 @@ export default function TICEmergencyModal({
                       ? 'bg-blue-100 text-blue-700 border border-blue-300' 
                       : 'bg-green-100 text-green-700 border border-green-300'
                   }`}>
-                    {isAdmin ? 'ðŸ›¡ï¸ Admin' : 'ðŸ‘¤ Personnel'} â€¢ {userDisplayName}
+                    {isAdmin ? 'Admin' : 'Personnel'} - {userDisplayName}
                   </span>
                 ) : (
                   <span className="text-xs font-bold px-3 py-1 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-300 animate-pulse">
-                    â³ Checking permissions...
+                    Checking permissions...
                   </span>
                 )}
               </div>
@@ -598,7 +598,7 @@ export default function TICEmergencyModal({
             <div className="flex items-center gap-2 text-xs">
               <span className={`h-2 w-2 rounded-full ${messages.length >= 0 ? 'bg-green-500' : 'bg-gray-400'} animate-pulse`}></span>
               <span className="text-slate-400 font-mono">
-                {messages.length} msg â€¢ {dispatchId ? `Dispatch: ${dispatchId.slice(-6)}` : `Report: ${emergencyReportId?.slice(-6)}`}
+                {messages.length} msg - {dispatchId ? `Dispatch: ${dispatchId.slice(-6)}` : `Report: ${emergencyReportId?.slice(-6)}`}
               </span>
             </div>
           </div>

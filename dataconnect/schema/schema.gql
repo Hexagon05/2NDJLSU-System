@@ -1,0 +1,43 @@
+type User @table {
+  username: String!
+  email: String!
+  role: String!
+  createdAt: Timestamp!
+  displayName: String
+}
+
+type LogisticsRequest @table {
+  requestDate: Date!
+  status: String!
+  priority: String!
+  destination: String!
+  requestingOfficer: User
+  notes: String
+  expectedDeliveryDate: Date
+}
+
+type Asset @table {
+  assetTag: String!
+  name: String!
+  type: String!
+  status: String!
+  location: String!
+  serialNumber: String
+  description: String
+}
+
+type RequestItem @table {
+  itemName: String!
+  quantity: Int!
+  unitOfMeasure: String!
+  logisticsRequest: LogisticsRequest
+  specificAssetRequired: String
+}
+
+type AssetAssignment @table {
+  assignedDate: Date!
+  status: String!
+  logisticsRequest: LogisticsRequest
+  asset: Asset
+  returnDate: Date
+}
