@@ -15,7 +15,7 @@ if (apps.length === 0) {
 
 const db = getFirestore();
 
-export async function POST(request: Request) {
+export async function POST(_request: Request) {
   try {
     const dispatchesRef = db.collection("dispatches");
     
