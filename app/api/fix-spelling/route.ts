@@ -1,22 +1,41 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
-// Initialize Firebase Admin SDK
-const apps = getApps();
-if (apps.length === 0) {
-  initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    } as any),
-  });
-}
+function getDb() {
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-const db = getFirestore();
+  if (!projectId || !clientEmail || !privateKey) {
+    return null;
+  }
+
+  if (getApps().length === 0) {
+    initializeApp({
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey: privateKey.replace(/\\n/g, "\n"),
+      } as any),
+    });
+  }
+
+  return getFirestore();
+}
 
 export async function POST(_request: Request) {
   try {
+    const db = getDb();
+    if (!db) {
+      return Response.json(
+        {
+          success: false,
+          error: "Missing Firebase Admin credentials. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY in environment variables.",
+        },
+        { status: 500 }
+      );
+    }
+
     const dispatchesRef = db.collection("dispatches");
     
     // Find all documents with misspelled status
