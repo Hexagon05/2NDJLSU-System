@@ -36,7 +36,7 @@ interface EmergencyReport {
 export default function EmergencyAlerts() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedReport, setSelectedReport] = useState<EmergencyReport | null>(null);
   const [emergencyReports, setEmergencyReports] = useState<EmergencyReport[]>([]);
   const [seenReportIds, setSeenReportIds] = useState<Set<string>>(new Set());
@@ -46,6 +46,9 @@ export default function EmergencyAlerts() {
   const [resolvedPage, setResolvedPage] = useState(1);
   const [pendingResolveReportId, setPendingResolveReportId] = useState<string | null>(null);
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedYear, setSelectedYear] = useState("");
   const [dialogState, setDialogState] = useState<{
     open: boolean;
     title: string;
@@ -64,6 +67,29 @@ export default function EmergencyAlerts() {
   const isResolvedStatus = (status?: string) => {
     const normalized = normalizeStatus(status);
     return normalized === "resolved";
+  };
+
+  const isReportWithinSelectedPeriod = (timestamp: Timestamp | null): boolean => {
+    if (!timestamp) return false;
+
+    const reportDate = timestamp.toDate();
+    const reportYear = reportDate.getFullYear();
+    const reportMonth = reportDate.getMonth() + 1;
+    const reportDateOnly = `${reportYear}-${String(reportMonth).padStart(2, "0")}-${String(reportDate.getDate()).padStart(2, "0")}`;
+
+    if (selectedDate) {
+      return reportDateOnly === selectedDate;
+    }
+
+    if (selectedYear && reportYear !== Number(selectedYear)) {
+      return false;
+    }
+
+    if (selectedMonth && reportMonth !== Number(selectedMonth)) {
+      return false;
+    }
+
+    return true;
   };
 
   // Fetch all emergency reports from Firebase
@@ -280,8 +306,9 @@ export default function EmergencyAlerts() {
   };
 
   // Calculate stats
-  const activeReports = emergencyReports.filter((r) => !isResolvedStatus(r.status));
-  const resolvedReports = emergencyReports.filter((r) => isResolvedStatus(r.status));
+  const timeFilteredReports = emergencyReports.filter((report) => isReportWithinSelectedPeriod(report.timestamp));
+  const activeReports = timeFilteredReports.filter((r) => !isResolvedStatus(r.status));
+  const resolvedReports = timeFilteredReports.filter((r) => isResolvedStatus(r.status));
   const activeTotalPages = Math.max(1, Math.ceil(activeReports.length / ACTIVE_PER_PAGE));
   const activeSafePage = Math.min(activePage, activeTotalPages);
   const paginatedActiveReports = activeReports.slice((activeSafePage - 1) * ACTIVE_PER_PAGE, activeSafePage * ACTIVE_PER_PAGE);
@@ -304,13 +331,15 @@ export default function EmergencyAlerts() {
   const resolvedSafePage = Math.min(resolvedPage, resolvedTotalPages);
   const paginatedResolvedReports = filteredResolvedReports.slice((resolvedSafePage - 1) * RESOLVED_PER_PAGE, resolvedSafePage * RESOLVED_PER_PAGE);
   const stats = {
-    totalEmergencies: emergencyReports.length,
+    totalEmergencies: timeFilteredReports.length,
     activeEmergencies: activeReports.length,
     resolvedEmergencies: resolvedReports.length,
   };
   
   // Count unseen reports
-  const unseenCount = emergencyReports.filter(report => report.id && !seenReportIds.has(report.id) && !isResolvedStatus(report.status)).length;
+  const unseenCount = activeReports.filter(report => report.id && !seenReportIds.has(report.id)).length;
+
+  const unseenCountAll = emergencyReports.filter(report => report.id && !seenReportIds.has(report.id) && !isResolvedStatus(report.status)).length;
 
   useEffect(() => {
     if (activePage > activeTotalPages) {
@@ -323,6 +352,34 @@ export default function EmergencyAlerts() {
       setResolvedPage(resolvedTotalPages);
     }
   }, [resolvedPage, resolvedTotalPages]);
+
+  useEffect(() => {
+    setActivePage(1);
+    setResolvedPage(1);
+  }, [selectedDate, selectedMonth, selectedYear]);
+
+  const yearsWithReports = Array.from(
+    new Set(
+      emergencyReports
+        .map((report) => report.timestamp?.toDate().getFullYear())
+        .filter((year): year is number => typeof year === "number")
+    )
+  ).sort((left, right) => right - left);
+
+  const monthOptions = [
+    { value: "1", label: "January" },
+    { value: "2", label: "February" },
+    { value: "3", label: "March" },
+    { value: "4", label: "April" },
+    { value: "5", label: "May" },
+    { value: "6", label: "June" },
+    { value: "7", label: "July" },
+    { value: "8", label: "August" },
+    { value: "9", label: "September" },
+    { value: "10", label: "October" },
+    { value: "11", label: "November" },
+    { value: "12", label: "December" },
+  ];
 
   if (loading) {
     return (
@@ -503,7 +560,7 @@ export default function EmergencyAlerts() {
         {/* Page Content */}
         <main className="flex-1 p-6 flex flex-col gap-6">
           {/* New Emergency Alert Banner */}
-          {unseenCount > 0 && (
+          {unseenCountAll > 0 && (
             <div className="bg-gradient-to-r from-yellow-500 to-orange-500 rounded-2xl p-4 shadow-xl text-white border-4 border-yellow-300 animate-pulse">
               <div className="flex items-center gap-4">
                 <div className="flex-shrink-0">
@@ -512,7 +569,7 @@ export default function EmergencyAlerts() {
                 <div className="flex-1">
                   <h3 className="text-xl font-black uppercase tracking-wide">âš ï¸ New Emergency Alert!</h3>
                   <p className="text-sm font-semibold text-white/90 mt-1">
-                    {unseenCount} {unseenCount === 1 ? 'new emergency report' : 'new emergency reports'} requiring immediate attention
+                    {unseenCountAll} {unseenCountAll === 1 ? 'new emergency report' : 'new emergency reports'} requiring immediate attention
                   </p>
                 </div>
                 <div className="flex-shrink-0">
@@ -531,6 +588,76 @@ export default function EmergencyAlerts() {
               </div>
             </div>
           )}
+
+          {/* Date/Month/Year Filters */}
+          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[170px]">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    if (e.target.value) {
+                      setSelectedMonth("");
+                      setSelectedYear("");
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                />
+              </div>
+
+              <div className="min-w-[150px]">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Month</label>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => {
+                    setSelectedMonth(e.target.value);
+                    if (e.target.value) {
+                      setSelectedDate("");
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                >
+                  <option value="">All months</option>
+                  {monthOptions.map((month) => (
+                    <option key={month.value} value={month.value}>{month.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="min-w-[120px]">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Year</label>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => {
+                    setSelectedYear(e.target.value);
+                    if (e.target.value) {
+                      setSelectedDate("");
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                >
+                  <option value="">All years</option>
+                  {yearsWithReports.map((year) => (
+                    <option key={year} value={String(year)}>{year}</option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => {
+                  setSelectedDate("");
+                  setSelectedMonth("");
+                  setSelectedYear("");
+                }}
+                className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-700 hover:bg-slate-200"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
           
           {/* Stats Grid */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -559,11 +686,11 @@ export default function EmergencyAlerts() {
             <div className="bg-gradient-to-br from-violet-600 to-purple-700 rounded-2xl p-6 shadow-xl shadow-violet-500/30 text-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-white/70">Unique Personnel</p>
-                  <p className="mt-2 text-4xl font-bold">{new Set(emergencyReports.map(r => r.senderId)).size}</p>
+                  <p className="text-sm font-medium text-white/70">Pending Review</p>
+                  <p className="mt-2 text-4xl font-bold">{unseenCount}</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-sm">
-                  <span className="material-symbols-outlined text-white/80" style={{ fontSize: "2rem" }}>group</span>
+                  <span className="material-symbols-outlined text-white/80" style={{ fontSize: "2rem" }}>notification_important</span>
                 </div>
               </div>
             </div>
@@ -578,20 +705,6 @@ export default function EmergencyAlerts() {
                 </div>
               </div>
             </div>
-            {unseenCount > 0 && (
-              <div className="bg-gradient-to-br from-yellow-500 to-amber-600 rounded-2xl p-6 shadow-xl shadow-yellow-500/30 text-white animate-pulse">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-white/70">New/Unseen Reports</p>
-                    <p className="mt-2 text-4xl font-bold">{unseenCount}</p>
-                  </div>
-                  <div className="rounded-2xl bg-white/10 p-3 backdrop-blur-sm">
-                    <span className="material-symbols-outlined text-white/80" style={{ fontSize: "2rem" }}>notification_important</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
           </div>
 
           {/* Emergency Reports Table */}

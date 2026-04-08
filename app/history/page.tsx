@@ -65,8 +65,11 @@ export default function HistoryPage() {
   const [monthFilter, setMonthFilter] = useState("");
   const [yearFilter, setYearFilter] = useState("");
   const [dateFilter, setDateFilter] = useState("");
+  const [exportStartDate, setExportStartDate] = useState("");
+  const [exportEndDate, setExportEndDate] = useState("");
+  const [showExportFramePicker, setShowExportFramePicker] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [historyData, setHistoryData] = useState<HistoryRecord[]>([]);
   const [fetchLoading, setFetchLoading] = useState(true);
   const [selectedDispatch, setSelectedDispatch] = useState<HistoryRecord | null>(null);
@@ -143,16 +146,26 @@ export default function HistoryPage() {
 
   const handleExportExcel = () => {
     try {
+      if (exportStartDate && exportEndDate && exportStartDate > exportEndDate) {
+        alert("Invalid export date range. 'From' date must be earlier than or equal to 'To' date.");
+        return false;
+      }
+
+      if (exportFrameData.length === 0) {
+        alert("No records found for the selected export date frame.");
+        return false;
+      }
+
       const supplyColumns = Array.from(
         new Set(
-          filteredData.flatMap((record) =>
+          exportFrameData.flatMap((record) =>
             record.supplies.map((supply) => `${supply.category} - ${supply.item}`)
           )
         )
       ).sort((left, right) => left.localeCompare(right));
 
       // Prepare data for export
-      const exportData = filteredData.map((record, index) => {
+      const exportData = exportFrameData.map((record, index) => {
         const supplyData = Object.fromEntries(
           supplyColumns.map((column) => [column, 0])
         );
@@ -212,18 +225,22 @@ export default function HistoryPage() {
       if (user?.email) {
         logActivity(
           "EXPORT_EXCEL",
-          `Exported ${filteredData.length} dispatch records to Excel`,
+          `Exported ${exportFrameData.length} dispatch records to Excel`,
           user.email,
           {
-            recordsCount: filteredData.length,
+            recordsCount: exportFrameData.length,
             filename: filename,
             timestamp: new Date().toISOString(),
+            exportStartDate: exportStartDate || null,
+            exportEndDate: exportEndDate || null,
           }
         );
       }
+      return true;
     } catch (error) {
       console.error("Error exporting to Excel:", error);
       alert("Failed to export to Excel. Please try again.");
+      return false;
     }
   };
 
@@ -250,6 +267,48 @@ export default function HistoryPage() {
 
     return hasTextMatch && hasMonthMatch && hasYearMatch && hasDateMatch;
   });
+
+  const exportFrameData = filteredData.filter((record) => {
+    if (!record.createdAt) return false;
+
+    const recordDate = record.createdAt.toDate();
+    const recordDateString = `${recordDate.getFullYear()}-${String(recordDate.getMonth() + 1).padStart(2, "0")}-${String(recordDate.getDate()).padStart(2, "0")}`;
+
+    const hasStartMatch = !exportStartDate || recordDateString >= exportStartDate;
+    const hasEndMatch = !exportEndDate || recordDateString <= exportEndDate;
+
+    return hasStartMatch && hasEndMatch;
+  });
+
+  const filteredSummary = {
+    total: filteredData.length,
+    successful: filteredData.filter((record) => record.status === "Successful Dispatch").length,
+    cancelled: filteredData.filter((record) => record.status === "Cancelled").length,
+    uniqueVehicles: new Set(filteredData.map((record) => record.vehicle)).size,
+  };
+
+  const availableYears = Array.from(
+    new Set(
+      historyData
+        .map((record) => record.createdAt?.toDate().getFullYear())
+        .filter((year): year is number => typeof year === "number")
+    )
+  ).sort((left, right) => right - left);
+
+  const monthOptions = [
+    { value: "1", label: "January" },
+    { value: "2", label: "February" },
+    { value: "3", label: "March" },
+    { value: "4", label: "April" },
+    { value: "5", label: "May" },
+    { value: "6", label: "June" },
+    { value: "7", label: "July" },
+    { value: "8", label: "August" },
+    { value: "9", label: "September" },
+    { value: "10", label: "October" },
+    { value: "11", label: "November" },
+    { value: "12", label: "December" },
+  ];
 
   const RECORDS_PER_PAGE = 10;
   const totalPages = Math.max(1, Math.ceil(filteredData.length / RECORDS_PER_PAGE));
@@ -311,6 +370,89 @@ export default function HistoryPage() {
           }}
           onClose={() => setSelectedDispatch(null)}
         />
+      )}
+
+      {showExportFramePicker && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/45 backdrop-blur-[1px] p-4"
+          onClick={() => setShowExportFramePicker(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-emerald-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Export Date Frame</h3>
+                <p className="text-xs text-slate-500">Select a timeframe for exported records.</p>
+              </div>
+              <button
+                onClick={() => setShowExportFramePicker(false)}
+                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "1.2rem" }}>close</span>
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">From</label>
+                  <input
+                    type="date"
+                    value={exportStartDate}
+                    onChange={(e) => setExportStartDate(e.target.value)}
+                    className="px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">To</label>
+                  <input
+                    type="date"
+                    value={exportEndDate}
+                    onChange={(e) => setExportEndDate(e.target.value)}
+                    className="px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                {`Records to export: ${exportFrameData.length}`}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+              <button
+                onClick={() => {
+                  setExportStartDate("");
+                  setExportEndDate("");
+                }}
+                className="px-3 py-2 rounded-lg border border-slate-200 bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition-colors"
+              >
+                Clear Frame
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowExportFramePicker(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const didExport = handleExportExcel();
+                    if (didExport) {
+                      setShowExportFramePicker(false);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
+                >
+                  Export Now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Sidebar */}
@@ -426,24 +568,26 @@ export default function HistoryPage() {
                   className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-slate-900 placeholder-slate-400 shadow-sm transition-all focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 />
               </div>
-              <input
-                type="number"
-                min={1}
-                max={12}
-                placeholder="Month (1-12)"
+              <select
                 value={monthFilter}
                 onChange={(e) => setMonthFilter(e.target.value)}
-                className="w-40 px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
-              />
-              <input
-                type="number"
-                min={2000}
-                max={2100}
-                placeholder="Year"
+                className="w-44 px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
+              >
+                <option value="">All Months</option>
+                {monthOptions.map((month) => (
+                  <option key={month.value} value={month.value}>{month.label}</option>
+                ))}
+              </select>
+              <select
                 value={yearFilter}
                 onChange={(e) => setYearFilter(e.target.value)}
                 className="w-36 px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
-              />
+              >
+                <option value="">All Years</option>
+                {availableYears.map((year) => (
+                  <option key={year} value={String(year)}>{year}</option>
+                ))}
+              </select>
               <input
                 type="date"
                 value={dateFilter}
@@ -451,12 +595,42 @@ export default function HistoryPage() {
                 className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium"
               />
               <button
-                onClick={handleExportExcel}
+                onClick={() => {
+                  setMonthFilter("");
+                  setYearFilter("");
+                  setDateFilter("");
+                }}
+                className="px-4 py-3 rounded-xl border border-slate-200 bg-slate-100 text-slate-700 text-sm font-semibold hover:bg-slate-200 transition-colors"
+              >
+                Clear Filters
+              </button>
+              <button
+                onClick={() => setShowExportFramePicker(true)}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-5 py-3 text-white text-sm font-semibold shadow-lg shadow-emerald-500/30 transition-all hover:shadow-xl hover:shadow-emerald-500/40 active:scale-95"
               >
                 <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>download</span>
                 Export Excel
               </button>
+            </div>
+
+            {/* Filtered Summary Cards */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 p-5 text-white shadow-lg">
+                <p className="text-xs uppercase tracking-wider text-slate-300 font-bold">Filtered Records</p>
+                <p className="mt-2 text-3xl font-black">{filteredSummary.total}</p>
+              </div>
+              <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-green-700 p-5 text-white shadow-lg shadow-emerald-500/30">
+                <p className="text-xs uppercase tracking-wider text-emerald-100 font-bold">Successful Dispatch</p>
+                <p className="mt-2 text-3xl font-black">{filteredSummary.successful}</p>
+              </div>
+              <div className="rounded-2xl bg-gradient-to-br from-rose-600 to-red-700 p-5 text-white shadow-lg shadow-rose-500/30">
+                <p className="text-xs uppercase tracking-wider text-rose-100 font-bold">Cancelled Dispatch</p>
+                <p className="mt-2 text-3xl font-black">{filteredSummary.cancelled}</p>
+              </div>
+              <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 p-5 text-white shadow-lg shadow-blue-500/30">
+                <p className="text-xs uppercase tracking-wider text-blue-100 font-bold">Unique Vehicles</p>
+                <p className="mt-2 text-3xl font-black">{filteredSummary.uniqueVehicles}</p>
+              </div>
             </div>
 
             {/* Table */}

@@ -40,6 +40,11 @@ interface RequisitionOption {
     embeddedSupplies: Supply[];
 }
 
+interface PersonnelIncludedEntry {
+    selectedPersonnel: string;
+    customPersonnel: string;
+}
+
 const normalizeLookupValue = (value: unknown): string =>
     String(value ?? "").trim().toLowerCase();
 
@@ -73,7 +78,9 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const [deliveryLocationLabel, setDeliveryLocationLabel] = useState("");
     const [pinTarget, setPinTarget] = useState<"start" | "delivery">("delivery");
     const [personnels, setPersonnels] = useState("");
-    const [personnelIncluded, setPersonnelIncluded] = useState("");
+    const [personnelIncludedEntries, setPersonnelIncludedEntries] = useState<PersonnelIncludedEntry[]>([
+        { selectedPersonnel: "", customPersonnel: "" },
+    ]);
     const [truck, setTruck] = useState("");
     const [requisitionNumber, setRequisitionNumber] = useState("");
     const [fetchedSupplies, setFetchedSupplies] = useState<Supply[]>([]);
@@ -99,7 +106,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const [step, setStep] = useState<"form" | "summary">("form");
 
     // DB Data
-    const [dbVehicles, setDbVehicles] = useState<{ id: string; codename: string; plate: string }[]>([]);
+    const [dbVehicles, setDbVehicles] = useState<{ id: string; codename: string; plate: string; status: string }[]>([]);
     const [dbPersonnels, setDbPersonnels] = useState<{ id: string; name: string }[]>([]);
     const [approvedRequisitions, setApprovedRequisitions] = useState<RequisitionOption[]>([]);
     const [loadingRequisitions, setLoadingRequisitions] = useState(false);
@@ -114,9 +121,42 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     // Computed: All blowbagets checked
     const hasBlowbagets = Object.values(blowbagetsChecklist).every(checked => checked);
 
+    const personnelIncludedNames = personnelIncludedEntries
+        .map((entry) => {
+            const selected = entry.selectedPersonnel.trim();
+            const custom = entry.customPersonnel.trim();
+            return [selected, custom].filter(Boolean);
+        })
+        .flat();
+
+    const personnelIncluded = Array.from(new Set(personnelIncludedNames)).join(", ");
+
     // Toggle individual checklist item
     const toggleBlowbagetsItem = (item: keyof typeof blowbagetsChecklist) => {
         setBlowbagetsChecklist(prev => ({ ...prev, [item]: !prev[item] }));
+    };
+
+    const updatePersonnelIncludedEntry = (
+        index: number,
+        field: keyof PersonnelIncludedEntry,
+        value: string
+    ) => {
+        setPersonnelIncludedEntries((prev) =>
+            prev.map((entry, idx) => (idx === index ? { ...entry, [field]: value } : entry))
+        );
+    };
+
+    const addPersonnelIncludedEntry = () => {
+        setPersonnelIncludedEntries((prev) => [...prev, { selectedPersonnel: "", customPersonnel: "" }]);
+    };
+
+    const removePersonnelIncludedEntry = (index: number) => {
+        setPersonnelIncludedEntries((prev) => {
+            if (prev.length === 1) {
+                return [{ selectedPersonnel: "", customPersonnel: "" }];
+            }
+            return prev.filter((_, idx) => idx !== index);
+        });
     };
 
     // Check all blowbagets items
@@ -363,9 +403,19 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     id: d.id,
                     codename: d.data().codename,
                     plate: d.data().plate,
+                    status: String(d.data().status || ""),
                 }));
-                setDbVehicles(vData);
-                if (vData.length > 0) setTruck(vData[0].codename);
+
+                const serviceableVehicles = vData.filter(
+                    (vehicle) => vehicle.status.toLowerCase() === "serviceable"
+                );
+
+                setDbVehicles(serviceableVehicles);
+                if (serviceableVehicles.length > 0) {
+                    setTruck(serviceableVehicles[0].codename);
+                } else {
+                    setTruck("");
+                }
             } catch (err) {
                 console.error("Error loading vehicles:", err);
             }
@@ -900,6 +950,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     officer: personnels.trim(),
                     personnels: personnels.trim(),
                     personnelIncluded: personnelIncluded.trim(),
+                    personnelIncludedList: personnelIncludedNames,
                     truck,
                     supplies: suppliesWithResolvedClass,
                     requisitionNumber: requisitionNumber.trim(),
@@ -947,7 +998,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 animate-fade-in">
             <div className="absolute inset-0 bg-gradient-to-br from-slate-900/90 via-slate-800/90 to-emerald-900/80 backdrop-blur-xl" onClick={onClose} />
             <div className="relative z-10 flex flex-col w-full max-w-6xl max-h-[92vh] rounded-3xl bg-gradient-to-br from-white via-slate-50 to-emerald-50/30 shadow-2xl shadow-emerald-500/10 overflow-hidden border border-white/60 animate-scale-in">
                 {/* Header */}
@@ -1122,15 +1173,54 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                                 <span className="h-1 w-1 rounded-full bg-blue-500"></span>
                                                 Personnel Included (Optional)
                                             </label>
-                                            <input
-                                                type="text"
-                                                value={personnelIncluded}
-                                                onChange={(e) => setPersonnelIncluded(e.target.value)}
-                                                className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none transition-all shadow-sm hover:shadow-md"
-                                                placeholder="e.g. John Doe, Jane Smith"
-                                            />
+                                            <div className="space-y-3">
+                                                {personnelIncludedEntries.map((entry, index) => (
+                                                    <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                                                        <div className="relative">
+                                                            <select
+                                                                value={entry.selectedPersonnel}
+                                                                onChange={(e) => updatePersonnelIncludedEntry(index, "selectedPersonnel", e.target.value)}
+                                                                className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none transition-all shadow-sm hover:shadow-md appearance-none cursor-pointer"
+                                                            >
+                                                                <option value="">Select from system list</option>
+                                                                {dbPersonnels.map((o) => (
+                                                                    <option key={`${o.id}-included-${index}`} value={o.name}>{o.name}</option>
+                                                                ))}
+                                                            </select>
+                                                            <span className="absolute right-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-slate-400 pointer-events-none">expand_more</span>
+                                                        </div>
+                                                        <input
+                                                            type="text"
+                                                            value={entry.customPersonnel}
+                                                            onChange={(e) => updatePersonnelIncludedEntry(index, "customPersonnel", e.target.value)}
+                                                            className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none transition-all shadow-sm hover:shadow-md"
+                                                            placeholder="Type personnel not in system"
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => removePersonnelIncludedEntry(index)}
+                                                            className="rounded-xl border-2 border-rose-200 bg-rose-50 px-3 py-2 text-rose-600 hover:bg-rose-100 transition-colors"
+                                                            aria-label="Remove personnel row"
+                                                        >
+                                                            <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>close</span>
+                                                        </button>
+                                                    </div>
+                                                ))}
+
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <button
+                                                        type="button"
+                                                        onClick={addPersonnelIncludedEntry}
+                                                        className="inline-flex items-center gap-2 rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors"
+                                                    >
+                                                        <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>add</span>
+                                                        Add Personnel
+                                                    </button>
+                                                    <p className="text-[11px] text-slate-500">Use dropdown for registered personnel, or type names not yet in the system.</p>
+                                                </div>
+                                            </div>
                                         </div>
-                                        
+
                                         {/* BLOWBAGETS Checklist */}
                                         <div className="space-y-3">
                                             <div className="flex items-center justify-between">

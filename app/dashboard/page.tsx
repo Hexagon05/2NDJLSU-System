@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
 import Image from "next/image";
-import { OpenStreetMap } from "@/components/OpenStreetMap";
+import dynamic from "next/dynamic";
 import DispatchModal from "@/components/DispatchModal";
 import DispatchDetailModal from "@/components/DispatchDetailModal";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
@@ -23,8 +23,18 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity-logger";
-import * as XLSX from "xlsx";
-import { getItemClassLookup, resolveSupplyClassLabel, resolveSupplyItemLabel, resolveSupplyQuantityValue } from "@/lib/supply-class-resolver";
+
+const FleetMap = dynamic(
+  () => import("@/components/FleetMap"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-full w-full bg-slate-100 animate-pulse flex items-center justify-center text-xs font-semibold text-slate-500">
+        Loading fleet map...
+      </div>
+    ),
+  }
+);
 
 interface Dispatch {
   id: string;
@@ -85,7 +95,7 @@ const STATUS_STYLES: Record<string, string> = {
 export default function Dashboard() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [selectedDispatch, setSelectedDispatch] = useState<Dispatch | null>(null);
@@ -99,8 +109,62 @@ export default function Dashboard() {
 
   // Vehicle tracking state
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
-  const [mapCenter, setMapCenter] = useState({ lat: 9.748257, lng: 118.771556, zoom: 15 });
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const [vehicleFilter, setVehicleFilter] = useState<"all" | "serviceable" | "active-dispatch">("all");
+  const [selectedVehicleDispatch, setSelectedVehicleDispatch] = useState<Dispatch | null>(null);
+  const [showVehicleDispatchPanel, setShowVehicleDispatchPanel] = useState(false);
+  const [vehicleHint, setVehicleHint] = useState("");
+
+  const ACTIVE_DISPATCH_STATUSES = ["Pending", "Approved", "En Route", "Ongoing"];
+
+  const normalize = (value: string | undefined | null): string =>
+    String(value || "").trim().toLowerCase();
+
+  const isActiveDispatch = (status: string | undefined): boolean =>
+    ACTIVE_DISPATCH_STATUSES.includes(String(status || "").trim());
+
+  const findActiveDispatchForVehicle = (vehicle: Vehicle): Dispatch | null => {
+    const vehicleCodename = normalize(vehicle.codename);
+    const vehiclePlate = normalize(vehicle.plate);
+
+    return (
+      dispatches.find((dispatch) => {
+        if (!isActiveDispatch(dispatch.status)) return false;
+
+        const truckValue = normalize(dispatch.truck);
+        if (!truckValue) return false;
+
+        return (
+          truckValue === vehicleCodename
+          || truckValue.includes(vehicleCodename)
+          || (vehiclePlate.length > 0 && (truckValue === vehiclePlate || truckValue.includes(vehiclePlate)))
+        );
+      }) || null
+    );
+  };
+
+  const filteredVehicles = vehicles.filter((vehicle) => {
+    const queryMatch =
+      normalize(vehicle.codename).includes(normalize(vehicleSearch))
+      || normalize(vehicle.plate).includes(normalize(vehicleSearch))
+      || normalize(vehicle.personnelName).includes(normalize(vehicleSearch));
+
+    if (!queryMatch) return false;
+
+    if (vehicleFilter === "serviceable") {
+      return vehicle.status === "Serviceable";
+    }
+
+    if (vehicleFilter === "active-dispatch") {
+      return findActiveDispatchForVehicle(vehicle) !== null;
+    }
+
+    return true;
+  });
+
+  const selectedVehicleData = vehicles.find((vehicle) => vehicle.id === selectedVehicle) || null;
+  const activeDispatchCount = dispatches.filter((dispatch) => isActiveDispatch(dispatch.status)).length;
 
   // Predefined coordinates to assign to vehicles from database
   const vehicleCoordinates = [
@@ -116,9 +180,17 @@ export default function Dashboard() {
   ];
 
   const handleVehicleClick = (vehicle: Vehicle) => {
-    if (vehicle.lat && vehicle.lng) {
-      setSelectedVehicle(vehicle.id);
-      setMapCenter({ lat: vehicle.lat, lng: vehicle.lng, zoom: 15 });
+    setSelectedVehicle(vehicle.id);
+
+    const activeDispatch = findActiveDispatchForVehicle(vehicle);
+    if (activeDispatch) {
+      setSelectedVehicleDispatch(activeDispatch);
+      setShowVehicleDispatchPanel(true);
+      setVehicleHint("");
+    } else {
+      setSelectedVehicleDispatch(null);
+      setShowVehicleDispatchPanel(false);
+      setVehicleHint(`${vehicle.codename} has no active dispatch at the moment.`);
     }
   };
 
@@ -156,7 +228,7 @@ export default function Dashboard() {
     if (user) {
       fetchVehicles();
     }
-  }, [user]);
+  }, [user, dispatchRefresh]);
 
   // Live dispatches listener
   useEffect(() => {
@@ -343,76 +415,6 @@ export default function Dashboard() {
     }
   };
 
-  const handleExportRecentDispatches = async () => {
-    try {
-      const itemClassLookup = await getItemClassLookup();
-      const rows = dispatches.flatMap((dispatch, index) => {
-        const supplies = Array.isArray(dispatch.supplies) ? dispatch.supplies : [];
-
-        if (supplies.length === 0) {
-          return [
-            {
-              "No.": index + 1,
-              "Dispatch ID": dispatch.dispatchId,
-              "Status": dispatch.status,
-              "Officer": dispatch.officer,
-              "Personnels": dispatch.personnels || "N/A",
-              "Vehicle": dispatch.truck || "N/A",
-              "Landmark": dispatch.deliveryLocation?.label || dispatch.location?.label || "Location unknown",
-              "Latitude": dispatch.deliveryLocation?.lat ?? dispatch.location?.lat ?? "N/A",
-              "Longitude": dispatch.deliveryLocation?.lng ?? dispatch.location?.lng ?? "N/A",
-              "Created At": formatTime(dispatch.createdAt),
-              "Supply Class": "N/A",
-              "Supply Item": "No supplies listed",
-              "Quantity": 0,
-            },
-          ];
-        }
-
-        return supplies.map((supply) => ({
-          "No.": index + 1,
-          "Dispatch ID": dispatch.dispatchId,
-          "Status": dispatch.status,
-          "Officer": dispatch.officer,
-          "Personnels": dispatch.personnels || "N/A",
-          "Vehicle": dispatch.truck || "N/A",
-          "Landmark": dispatch.deliveryLocation?.label || dispatch.location?.label || "Location unknown",
-          "Latitude": dispatch.deliveryLocation?.lat ?? dispatch.location?.lat ?? "N/A",
-          "Longitude": dispatch.deliveryLocation?.lng ?? dispatch.location?.lng ?? "N/A",
-          "Created At": formatTime(dispatch.createdAt),
-          "Supply Class": resolveSupplyClassLabel(supply, itemClassLookup),
-          "Supply Item": resolveSupplyItemLabel(supply),
-          "Quantity": resolveSupplyQuantityValue(supply),
-        }));
-      });
-
-      const worksheet = XLSX.utils.json_to_sheet(rows);
-      const workbook = XLSX.utils.book_new();
-      worksheet["!cols"] = [
-        { wch: 6 },
-        { wch: 16 },
-        { wch: 12 },
-        { wch: 30 },
-        { wch: 30 },
-        { wch: 18 },
-        { wch: 34 },
-        { wch: 14 },
-        { wch: 14 },
-        { wch: 22 },
-        { wch: 22 },
-        { wch: 30 },
-        { wch: 10 },
-      ];
-
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Recent Dispatches");
-      const datePart = new Date().toISOString().split("T")[0];
-      XLSX.writeFile(workbook, `Recent_Dispatches_${datePart}.xlsx`);
-    } catch (error) {
-      console.error("Error exporting recent dispatches:", error);
-      alert("Failed to export recent dispatches. Please try again.");
-    }
-  };
-
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-100 to-slate-200">
       {/* Dispatch Modal */}
@@ -564,85 +566,193 @@ export default function Dashboard() {
 
           {/* Main Grid - Map and Activity */}
           <div className="grid gap-6 lg:grid-cols-4 flex-1 min-h-0">
-            {/* Map Section - Now 3/4 width and taller */}
-            <div className="lg:col-span-3 rounded-2xl bg-gradient-to-br from-white to-slate-50/50 p-7 shadow-xl hover:shadow-2xl transition-all duration-300 border-2 border-slate-200/60 flex flex-col min-h-[500px]">
-              {/* Header Section */}
-              <div className="mb-5 pb-4 border-b-2 border-slate-100">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/30">
-                      <span className="material-symbols-outlined text-white" style={{ fontSize: "1.75rem" }}>map</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <h2 className="text-xl font-bold text-slate-900 leading-tight tracking-tight">Real-Time Vehicle Tracking</h2>
-                      <p className="text-xs text-slate-500 font-semibold flex items-center gap-1.5 mt-1">
-                        <span className="material-symbols-outlined text-blue-500" style={{ fontSize: "0.875rem" }}>location_on</span>
-                        GPS Monitoring - Palawan Area
-                      </p>
-                    </div>
+            {/* Map Section - Cockpit Layout */}
+            <div className="lg:col-span-3 rounded-2xl bg-gradient-to-br from-white to-slate-50/50 p-5 shadow-xl hover:shadow-2xl transition-all duration-300 border-2 border-slate-200/60 flex flex-col min-h-[500px]">
+              <div className="mb-4 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/30">
+                    <span className="material-symbols-outlined text-white" style={{ fontSize: "1.45rem" }}>map</span>
                   </div>
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <div className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-50 to-emerald-100 px-3.5 py-2 text-[10px] font-extrabold text-emerald-700 uppercase tracking-wide border border-emerald-200 shadow-sm">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shadow-sm shadow-emerald-500/50"></span>
-                      Active
-                    </div>
-                    <div className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-50 to-amber-100 px-3.5 py-2 text-[10px] font-extrabold text-amber-700 uppercase tracking-wide border border-amber-200 shadow-sm">
-                      <span className="h-2 w-2 rounded-full bg-amber-500"></span>
-                      Idle
-                    </div>
-                    <div className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-rose-50 to-rose-100 px-3.5 py-2 text-[10px] font-extrabold text-rose-700 uppercase tracking-wide border border-rose-200 shadow-sm">
-                      <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse shadow-sm shadow-rose-500/50"></span>
-                      Emergency
-                    </div>
-                    <button className="flex items-center gap-2 text-xs font-extrabold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 transition-all duration-200 ml-2 px-4 py-2 rounded-xl border-2 border-blue-600 shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 hover:scale-105 active:scale-95">
-                      <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>refresh</span>
-                      Refresh
-                    </button>
+                  <div>
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight">Vehicle Operations Map</h2>
+                    <p className="text-xs text-slate-500 font-semibold">Aligned dispatch and vehicle monitoring center</p>
                   </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap justify-start lg:justify-end">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-[10px] font-bold text-emerald-700 uppercase">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    {vehicles.filter((vehicle) => vehicle.status === "Serviceable").length} Serviceable
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 border border-blue-200 px-2.5 py-1 text-[10px] font-bold text-blue-700 uppercase">
+                    <span className="h-2 w-2 rounded-full bg-blue-500"></span>
+                    {activeDispatchCount} Active Dispatch
+                  </span>
+                  <button
+                    onClick={() => setDispatchRefresh((value) => value + 1)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[10px] font-bold uppercase text-white hover:bg-slate-700"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "0.9rem" }}>refresh</span>
+                    Refresh
+                  </button>
                 </div>
               </div>
 
-              {/* Vehicle Buttons Section */}
-              <div className="mb-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="material-symbols-outlined text-slate-500" style={{ fontSize: "1.25rem" }}>local_shipping</span>
-                  <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Registered Vehicles</h3>
-                  <div className="flex-1 h-px bg-gradient-to-r from-slate-200 to-transparent"></div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {vehicles.map((vehicle) => (
+              <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-4 flex-1 min-h-0">
+                {/* Left Vehicle Panel */}
+                <div className="rounded-2xl border border-blue-200/60 bg-gradient-to-b from-blue-600 to-blue-700 p-3 text-white shadow-lg min-h-0 flex flex-col">
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <p className="text-xs font-black uppercase tracking-wider">Vehicle Queue</p>
+                    <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">{filteredVehicles.length}</span>
+                  </div>
+
+                  <div className="relative mb-2">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-white/70" style={{ fontSize: "0.95rem" }}>search</span>
+                    <input
+                      value={vehicleSearch}
+                      onChange={(e) => setVehicleSearch(e.target.value)}
+                      placeholder="Track vehicle"
+                      className="w-full rounded-lg border border-white/20 bg-white/15 px-9 py-2 text-xs font-semibold text-white placeholder:text-white/70 focus:outline-none focus:ring-2 focus:ring-white/40"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1.5 mb-3">
                     <button
-                      key={vehicle.id}
-                      onClick={() => handleVehicleClick(vehicle)}
-                      className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-xs transition-all duration-200 border ${
-                        selectedVehicle === vehicle.id
-                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white border-emerald-600 shadow-lg shadow-emerald-500/30 scale-105'
-                          : vehicle.status === 'Serviceable'
-                          ? 'bg-slate-700 text-slate-200 border-slate-600 hover:border-emerald-500 hover:shadow-md hover:shadow-emerald-500/20 hover:bg-slate-600'
-                          : 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed opacity-40'
-                      }`}
-                      disabled={vehicle.status !== 'Serviceable'}
+                      onClick={() => setVehicleFilter("all")}
+                      className={`rounded-md py-1.5 text-[10px] font-black uppercase transition-colors ${vehicleFilter === "all" ? "bg-white text-blue-700" : "bg-white/15 text-white hover:bg-white/25"}`}
                     >
-                      <span className={`material-symbols-outlined ${selectedVehicle === vehicle.id ? 'text-white' : vehicle.status === 'Serviceable' ? 'text-slate-300' : 'text-slate-600'}`} style={{ fontSize: "1rem" }}>
-                        local_shipping
-                      </span>
-                      <span className="font-mono font-bold tracking-tight">{vehicle.codename}</span>
-                      {vehicle.status === 'Serviceable' && selectedVehicle === vehicle.id && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse"></span>
-                      )}
+                      All
                     </button>
-                  ))}
-                </div>
-              </div>
+                    <button
+                      onClick={() => setVehicleFilter("serviceable")}
+                      className={`rounded-md py-1.5 text-[10px] font-black uppercase transition-colors ${vehicleFilter === "serviceable" ? "bg-emerald-100 text-emerald-700" : "bg-white/15 text-white hover:bg-white/25"}`}
+                    >
+                      Ready
+                    </button>
+                    <button
+                      onClick={() => setVehicleFilter("active-dispatch")}
+                      className={`rounded-md py-1.5 text-[10px] font-black uppercase transition-colors ${vehicleFilter === "active-dispatch" ? "bg-amber-100 text-amber-700" : "bg-white/15 text-white hover:bg-white/25"}`}
+                    >
+                      Active
+                    </button>
+                  </div>
 
-              {/* Map Container */}
-              <div className="flex-1 min-h-0 rounded-2xl overflow-hidden border-4 border-slate-300/50 shadow-2xl shadow-slate-400/20">
-                <OpenStreetMap
-                  latitude={mapCenter.lat}
-                  longitude={mapCenter.lng}
-                  zoom={mapCenter.zoom}
-                  height="h-full"
-                />
+                  <div className="flex-1 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
+                    {filteredVehicles.map((vehicle) => {
+                      const hasActiveDispatch = findActiveDispatchForVehicle(vehicle) !== null;
+
+                      return (
+                        <button
+                          key={vehicle.id}
+                          onClick={() => handleVehicleClick(vehicle)}
+                          disabled={vehicle.status !== "Serviceable"}
+                          className={`w-full rounded-xl p-2.5 text-left transition-all border ${selectedVehicle === vehicle.id
+                            ? "bg-white text-blue-800 border-white shadow-lg"
+                            : vehicle.status === "Serviceable"
+                              ? "bg-white/10 text-white border-white/20 hover:bg-white/20"
+                              : "bg-black/20 text-white/40 border-white/10 cursor-not-allowed"
+                            }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-black tracking-wide">{vehicle.codename}</p>
+                              <p className="text-[10px] opacity-80">{vehicle.plate || "No plate"}</p>
+                            </div>
+                            {hasActiveDispatch && (
+                              <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-black uppercase text-amber-900">Live</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+
+                    {filteredVehicles.length === 0 && (
+                      <div className="rounded-lg border border-white/20 bg-white/10 px-3 py-3 text-center text-xs font-semibold text-white/80">
+                        No vehicles found.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Map Stage */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-100/60 p-2 shadow-inner min-h-0 relative">
+                  <div className="h-full min-h-[360px] rounded-xl overflow-hidden border-2 border-slate-200 shadow-xl shadow-slate-300/40 relative">
+                    <FleetMap
+                      vehicles={vehicles}
+                      selectedVehicleId={selectedVehicle}
+                      onVehicleSelect={(vehicleId) => {
+                        const clickedVehicle = vehicles.find((vehicle) => vehicle.id === vehicleId);
+                        if (clickedVehicle) {
+                          handleVehicleClick(clickedVehicle);
+                        }
+                      }}
+                    />
+
+                    <div className="absolute left-3 top-3 z-10 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-lg backdrop-blur-sm">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Focused Vehicle</p>
+                      <p className="text-xs font-bold text-slate-800">{selectedVehicleData?.codename || "Select a vehicle"}</p>
+                    </div>
+
+                    {vehicleHint && (
+                      <div className="absolute left-3 bottom-3 z-10 rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs font-semibold text-amber-700 shadow-lg">
+                        {vehicleHint}
+                      </div>
+                    )}
+
+                    {showVehicleDispatchPanel && selectedVehicleDispatch && (
+                      <div className="absolute top-3 right-3 z-20 w-[350px] max-w-[92%] rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-md shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-3 bg-slate-900 text-white">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Active Dispatch</p>
+                            <p className="text-sm font-black">{selectedVehicleDispatch.dispatchId}</p>
+                          </div>
+                          <button
+                            onClick={() => setShowVehicleDispatchPanel(false)}
+                            className="rounded p-1.5 hover:bg-white/15"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>close</span>
+                          </button>
+                        </div>
+
+                        <div className="p-4 space-y-3 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-semibold">Status</span>
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUS_STYLES[selectedVehicleDispatch.status] ?? "bg-slate-100 text-slate-600"}`}>
+                              {selectedVehicleDispatch.status}
+                            </span>
+                          </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-slate-500 font-semibold">Officer</span>
+                            <span className="text-slate-800 font-bold text-right">{selectedVehicleDispatch.officer || "N/A"}</span>
+                          </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-slate-500 font-semibold">Personnel</span>
+                            <span className="text-slate-800 font-bold text-right">{selectedVehicleDispatch.personnels || "N/A"}</span>
+                          </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-slate-500 font-semibold">Destination</span>
+                            <span className="text-slate-800 font-semibold text-right">
+                              {selectedVehicleDispatch.deliveryLocation?.label || selectedVehicleDispatch.location?.label || "Location unavailable"}
+                            </span>
+                          </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-slate-500 font-semibold">Coordinates</span>
+                            <span className="text-slate-700 font-mono text-xs text-right">
+                              {(selectedVehicleDispatch.deliveryLocation?.lat ?? selectedVehicleDispatch.location?.lat ?? 0).toFixed(6)}, {(selectedVehicleDispatch.deliveryLocation?.lng ?? selectedVehicleDispatch.location?.lng ?? 0).toFixed(6)}
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => setSelectedDispatch(selectedVehicleDispatch)}
+                            className="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:from-blue-700 hover:to-indigo-700 transition-colors"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>open_in_new</span>
+                            Open Full Dispatch Details
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -693,13 +803,6 @@ export default function Dashboard() {
                     <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: "1.25rem" }}>receipt_long</span>
                     <h2 className="text-base font-bold text-slate-900">Recent Dispatches</h2>
                   </div>
-                  <button
-                    onClick={handleExportRecentDispatches}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100 transition-colors"
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: "0.95rem" }}>download</span>
-                    Export
-                  </button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar">

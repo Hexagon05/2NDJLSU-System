@@ -50,6 +50,19 @@ interface DeliveryProofImage {
     caption?: string;
 }
 
+interface Coordinates {
+    lat: number;
+    lng: number;
+    label?: string;
+}
+
+interface PersonnelReportLocation {
+    location: Coordinates;
+    timestamp: Timestamp | null;
+    reportText: string;
+    reportKind: string;
+}
+
 function formatTime(ts: Timestamp | null): string {
     if (!ts) return "â€”";
     return ts.toDate().toLocaleString("en-PH", {
@@ -73,6 +86,78 @@ const STATUS_STYLES: Record<string, string> = {
     Cancelled: "bg-rose-100 text-rose-700 border-rose-200",
 };
 
+function toNumber(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+        const parsed = Number(value.trim());
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function extractCoordinates(entry: any): Coordinates | null {
+    if (!entry || typeof entry !== "object") return null;
+
+    const sourceObjects = [
+        entry.location,
+        entry.currentLocation,
+        entry.reportLocation,
+        entry.emergencyLocation,
+        entry.coordinates,
+        entry,
+    ];
+
+    for (const source of sourceObjects) {
+        if (!source || typeof source !== "object") continue;
+
+        const geoPointLat = toNumber(source.latitude);
+        const geoPointLng = toNumber(source.longitude);
+        if (geoPointLat !== null && geoPointLng !== null) {
+            return {
+                lat: geoPointLat,
+                lng: geoPointLng,
+                label: typeof source.label === "string" ? source.label : undefined,
+            };
+        }
+
+        const lat = toNumber(source.lat ?? source.latitude);
+        const lng = toNumber(source.lng ?? source.lon ?? source.longitude);
+        if (lat !== null && lng !== null) {
+            return {
+                lat,
+                lng,
+                label: typeof source.label === "string" ? source.label : undefined,
+            };
+        }
+    }
+
+    return null;
+}
+
+function isDelayBreakOrStopOverReport(entry: any): boolean {
+    const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
+    const kind = String(entry?.type || entry?.status || entry?.action || "").toLowerCase();
+    const signal = `${text} ${kind}`;
+
+    return signal.includes("delay")
+        || signal.includes("break")
+        || signal.includes("stop over")
+        || signal.includes("stopover")
+        || signal.includes("rest");
+}
+
+function getReportKind(entry: any): string {
+    if (isDelayBreakOrStopOverReport(entry)) {
+        const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
+        if (text.includes("delay")) return "Delay";
+        if (text.includes("break") || text.includes("rest")) return "Break";
+        if (text.includes("stop over") || text.includes("stopover")) return "Stop Over";
+        return "Status Update";
+    }
+
+    return "Location Update";
+}
+
 export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Props) {
     const [completing, setCompleting] = useState(false);
     const [canceling, setCanceling] = useState(false);
@@ -86,6 +171,8 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [loadingProofImages, setLoadingProofImages] = useState(false);
     const [proofImages, setProofImages] = useState<DeliveryProofImage[]>([]);
     const [itemClassLookup, setItemClassLookup] = useState<Map<string, string>>(new Map());
+    const [personnelReportLocation, setPersonnelReportLocation] = useState<PersonnelReportLocation | null>(null);
+    const [loadingReportLocation, setLoadingReportLocation] = useState(false);
 
     useEffect(() => {
         acquireModalLock();
@@ -284,6 +371,101 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         }
     };
 
+    const loadPersonnelReportLocation = async () => {
+        if (!dispatch.id) {
+            setPersonnelReportLocation(null);
+            return;
+        }
+
+        setLoadingReportLocation(true);
+        try {
+            const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
+            const snap = await getDocs(query(messagesRef, orderBy("timestamp", "desc"), limit(50)));
+
+            if (snap.empty) {
+                setPersonnelReportLocation(null);
+                return;
+            }
+
+            const messages = snap.docs.map((messageDoc) => messageDoc.data() as any);
+
+            const prioritized = messages.find((entry) => {
+                const location = extractCoordinates(entry);
+                const isPersonnel = entry?.isAdmin !== true;
+                return Boolean(location) && isPersonnel && isDelayBreakOrStopOverReport(entry);
+            });
+
+            const fallback = messages.find((entry) => {
+                const location = extractCoordinates(entry);
+                const isPersonnel = entry?.isAdmin !== true;
+                return Boolean(location) && isPersonnel;
+            });
+
+            const selected = prioritized || fallback;
+            if (!selected) {
+                const dispatchRef = doc(db, "dispatches", dispatch.id);
+                const dispatchSnap = await getDoc(dispatchRef);
+                if (!dispatchSnap.exists()) {
+                    setPersonnelReportLocation(null);
+                    return;
+                }
+
+                const dispatchData = dispatchSnap.data() as any;
+                const docLevelLocation = extractCoordinates({
+                    currentLocation: dispatchData?.currentLocation,
+                    reportLocation: dispatchData?.reportLocation,
+                    emergencyLocation: dispatchData?.emergencyLocation,
+                    coordinates: dispatchData?.coordinates,
+                });
+
+                if (!docLevelLocation) {
+                    setPersonnelReportLocation(null);
+                    return;
+                }
+
+                setPersonnelReportLocation({
+                    location: docLevelLocation,
+                    timestamp:
+                        (dispatchData?.lastStatusUpdateAt as Timestamp)
+                        || (dispatchData?.updatedAt as Timestamp)
+                        || null,
+                    reportText: String(
+                        dispatchData?.statusNote
+                        || dispatchData?.delayReason
+                        || dispatchData?.breakReason
+                        || ""
+                    ).trim(),
+                    reportKind: String(dispatchData?.status || "Location Update"),
+                });
+                return;
+            }
+
+            const location = extractCoordinates(selected);
+            if (!location) {
+                setPersonnelReportLocation(null);
+                return;
+            }
+
+            setPersonnelReportLocation({
+                location,
+                timestamp: (selected?.timestamp as Timestamp) || null,
+                reportText: String(selected?.text || selected?.message || selected?.statusNote || "").trim(),
+                reportKind: getReportKind(selected),
+            });
+        } catch (error) {
+            console.error("Error loading personnel report location:", error);
+            setPersonnelReportLocation(null);
+        } finally {
+            setLoadingReportLocation(false);
+        }
+    };
+
+    useEffect(() => {
+        loadPersonnelReportLocation();
+        // dispatch.id changes when another dispatch detail is opened.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dispatch.id]);
+
     const handleOpenProofModal = async () => {
         setShowProofModal(true);
         await loadDeliveryProofImages();
@@ -438,6 +620,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const canViewProof = dispatch.status === "Successful Dispatch";
     const canCancel = ["Pending", "Approved", "En Route", "Ongoing"].includes(dispatch.status);
     const deliveryLocation = dispatch.deliveryLocation || dispatch.location;
+    const currentOperationalLocation = personnelReportLocation?.location || deliveryLocation;
     const requisitionId = dispatch.requisitionNumber || dispatch.requisitionId || dispatch.poNumber || "N/A";
 
     return (
@@ -656,15 +839,17 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         {/* Interactive Map Box */}
                         <div className="w-full lg:w-[400px] h-[300px] flex-shrink-0 relative rounded-3xl overflow-hidden border border-slate-200 shadow-lg bg-slate-50 group">
                             <LeafletMap
-                                lat={deliveryLocation?.lat || 0}
-                                lng={deliveryLocation?.lng || 0}
+                                lat={currentOperationalLocation?.lat || 0}
+                                lng={currentOperationalLocation?.lng || 0}
                             />
                             <div className="absolute top-4 left-4 z-[1000] bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-lg border border-slate-200 flex items-center gap-2">
                                 <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse-slow" />
-                                <span className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">Target Location</span>
+                                <span className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">
+                                    {personnelReportLocation ? "Personnel Current Point" : "Target Location"}
+                                </span>
                             </div>
                             <div className="absolute bottom-4 left-4 z-[1000] bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-[9px] font-mono text-white border border-white/20">
-                                {deliveryLocation?.lat?.toFixed(6) ?? "0.000000"}, {deliveryLocation?.lng?.toFixed(6) ?? "0.000000"}
+                                {currentOperationalLocation?.lat?.toFixed(6) ?? "0.000000"}, {currentOperationalLocation?.lng?.toFixed(6) ?? "0.000000"}
                             </div>
                         </div>
 
@@ -680,8 +865,23 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         <p className="text-2xl font-black text-slate-900 leading-tight">{deliveryLocation?.label || "Coordinate Point Established"}</p>
                                         <p className="text-sm text-emerald-700 font-medium mt-2 flex items-center gap-2">
                                             <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>explore</span>
-                                            Verified Strategic Landmark
+                                            {personnelReportLocation ? "Latest Personnel Report Location" : "Verified Strategic Landmark"}
                                         </p>
+                                        {loadingReportLocation ? (
+                                            <p className="text-xs text-slate-500 mt-2">Loading personnel report coordinates...</p>
+                                        ) : personnelReportLocation ? (
+                                            <div className="mt-3 rounded-2xl border border-emerald-200 bg-white/80 p-3 text-xs text-slate-700 space-y-1">
+                                                <p className="font-bold text-emerald-700 uppercase tracking-wider">{personnelReportLocation.reportKind}</p>
+                                                <p>{personnelReportLocation.location.label || "Location from personnel update"}</p>
+                                                <p className="font-mono">{personnelReportLocation.location.lat.toFixed(6)}, {personnelReportLocation.location.lng.toFixed(6)}</p>
+                                                <p className="text-slate-500">Reported at: {formatTime(personnelReportLocation.timestamp)}</p>
+                                                {personnelReportLocation.reportText ? (
+                                                    <p className="italic text-slate-600">"{personnelReportLocation.reportText}"</p>
+                                                ) : null}
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-slate-500 mt-2">No personnel delay/break location update found yet.</p>
+                                        )}
                                     </div>
                                     <span className="material-symbols-outlined text-emerald-500/10 text-9xl absolute right-[-20px] top-[-20px]">map</span>
                                 </div>

@@ -58,8 +58,9 @@ export default function PersonnelsPage() {
     const { user, loading, signOut } = useAuth();
     const router = useRouter();
 
-    const [sidebarOpen, setSidebarOpen] = useState(true);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
     const [viewMode, setViewMode] = useState<"card" | "list">("card");
+    const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState("");
     const [modalOpen, setModalOpen] = useState(false);
     const [form, setForm] = useState({ ...EMPTY_FORM });
@@ -175,9 +176,23 @@ export default function PersonnelsPage() {
         router.push("/login");
     };
 
+    const NAME_FIELDS: Array<"lastName" | "firstName" | "middleInitial"> = ["lastName", "firstName", "middleInitial"];
+
+    const stripDigits = (value: string): string => value.replace(/\d+/g, "");
+
+    const hasDigit = (value: string): boolean => /\d/.test(value);
+
+    const hasNumericInNameInputs = (payload: { lastName: string; firstName: string; middleInitial?: string }): boolean => {
+        return hasDigit(payload.lastName) || hasDigit(payload.firstName) || hasDigit(payload.middleInitial || "");
+    };
+
     // â”€â”€ form helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-        setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+        const { name, value } = e.target;
+        const normalizedValue = NAME_FIELDS.includes(name as "lastName" | "firstName" | "middleInitial")
+            ? stripDigits(value)
+            : value;
+        setForm((prev) => ({ ...prev, [name]: normalizedValue }));
     };
 
     // â”€â”€ password validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -244,6 +259,12 @@ export default function PersonnelsPage() {
         setErrorMsg("");
         
         try {
+            if (hasNumericInNameInputs(form)) {
+                setErrorMsg("Name fields cannot contain numbers.");
+                setSubmitting(false);
+                return;
+            }
+
             // Upload image if selected
             let imageUrl = "";
             if (imageFile) {
@@ -374,6 +395,11 @@ export default function PersonnelsPage() {
         try {
             const personnelSnapshot = { ...selectedPersonnel };
 
+            if (hasNumericInNameInputs(personnelSnapshot)) {
+                setErrorMsg("Name fields cannot contain numbers.");
+                return false;
+            }
+
             // Upload image if a new image was selected
             let imageUrl = personnelSnapshot.imageUrl || "";
             if (imageFile) {
@@ -439,7 +465,9 @@ export default function PersonnelsPage() {
 
     const handleEditChange = (field: keyof Officer, value: any) => {
         if (selectedPersonnel) {
-            setSelectedPersonnel({ ...selectedPersonnel, [field]: value });
+            const shouldSanitize = NAME_FIELDS.includes(field as "lastName" | "firstName" | "middleInitial");
+            const normalizedValue = shouldSanitize && typeof value === "string" ? stripDigits(value) : value;
+            setSelectedPersonnel({ ...selectedPersonnel, [field]: normalizedValue });
         }
     };
 
@@ -529,6 +557,15 @@ export default function PersonnelsPage() {
             o.email.toLowerCase().includes(term)
         );
     });
+
+    const ITEMS_PER_PAGE_CARD = 10;
+    const ITEMS_PER_PAGE_LIST = 12;
+    const itemsPerPage = viewMode === "card" ? ITEMS_PER_PAGE_CARD : ITEMS_PER_PAGE_LIST;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+    const safePage = Math.min(currentPage, totalPages);
+    const startIndex = (safePage - 1) * itemsPerPage;
+    const endIndex = Math.min(startIndex + itemsPerPage, filtered.length);
+    const paginatedFiltered = filtered.slice(startIndex, endIndex);
 
     // â”€â”€ avatar initials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const initials = (o: Officer) =>
@@ -696,7 +733,10 @@ export default function PersonnelsPage() {
                                     type="text"
                                     placeholder="Search by name, rank, or position..."
                                     value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    onChange={(e) => {
+                                        setSearchTerm(e.target.value);
+                                        setCurrentPage(1);
+                                    }}
                                     className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-slate-900 placeholder-slate-400 shadow-sm transition-all focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                                 />
                             </div>
@@ -704,7 +744,10 @@ export default function PersonnelsPage() {
                             {/* View toggle */}
                             <div className="flex items-center rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                                 <button
-                                    onClick={() => setViewMode("card")}
+                                    onClick={() => {
+                                        setViewMode("card");
+                                        setCurrentPage(1);
+                                    }}
                                     className={`flex items-center gap-1.5 px-4 py-3 text-sm font-semibold transition-all ${viewMode === "card"
                                         ? "bg-gradient-to-r from-slate-800 to-slate-900 text-white"
                                         : "text-slate-500 hover:bg-slate-50"
@@ -716,7 +759,10 @@ export default function PersonnelsPage() {
                                     Card
                                 </button>
                                 <button
-                                    onClick={() => setViewMode("list")}
+                                    onClick={() => {
+                                        setViewMode("list");
+                                        setCurrentPage(1);
+                                    }}
                                     className={`flex items-center gap-1.5 px-4 py-3 text-sm font-semibold transition-all ${viewMode === "list"
                                         ? "bg-gradient-to-r from-slate-800 to-slate-900 text-white"
                                         : "text-slate-500 hover:bg-slate-50"
@@ -768,7 +814,7 @@ export default function PersonnelsPage() {
                                     </div>
                                 ) : (
                                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                                        {filtered.map((officer, idx) => (
+                                        {paginatedFiltered.map((officer, idx) => (
                                             <button
                                                 key={officer.id}
                                                 onClick={() => handleViewDetails(officer)}
@@ -886,7 +932,7 @@ export default function PersonnelsPage() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {filtered.map((officer, idx) => (
+                                            {paginatedFiltered.map((officer, idx) => (
                                                 <tr
                                                     key={officer.id}
                                                     onClick={() => handleViewDetails(officer)}
@@ -929,6 +975,57 @@ export default function PersonnelsPage() {
                                         </tbody>
                                     </table>
                                 )}
+                            </div>
+                        )}
+
+                        {/* Pagination */}
+                        {!fetchLoading && filtered.length > 0 && totalPages > 1 && (
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                                <p className="text-xs font-semibold text-slate-600">
+                                    Showing {startIndex + 1}-{endIndex} of {filtered.length} personnel
+                                </p>
+
+                                <div className="flex items-center gap-1.5">
+                                    <button
+                                        onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                                        disabled={safePage === 1}
+                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <span className="material-symbols-outlined" style={{ fontSize: "0.95rem" }}>chevron_left</span>
+                                        Prev
+                                    </button>
+
+                                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                        .filter((page) => page === 1 || page === totalPages || Math.abs(page - safePage) <= 1)
+                                        .map((page, idx, pages) => {
+                                            const prev = pages[idx - 1];
+                                            const needsGap = prev && page - prev > 1;
+
+                                            return (
+                                                <div key={`page-wrapper-${page}`} className="flex items-center gap-1.5">
+                                                    {needsGap && <span className="px-1 text-slate-400">...</span>}
+                                                    <button
+                                                        onClick={() => setCurrentPage(page)}
+                                                        className={`h-8 min-w-8 rounded-lg px-2 text-xs font-bold transition-colors ${page === safePage
+                                                            ? "bg-emerald-600 text-white"
+                                                            : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                                                            }`}
+                                                    >
+                                                        {page}
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+
+                                    <button
+                                        onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                                        disabled={safePage === totalPages}
+                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        Next
+                                        <span className="material-symbols-outlined" style={{ fontSize: "0.95rem" }}>chevron_right</span>
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </div>
