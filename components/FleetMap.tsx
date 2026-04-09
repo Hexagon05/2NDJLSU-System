@@ -15,16 +15,19 @@ type FleetVehicle = {
 interface FleetMapProps {
   vehicles: FleetVehicle[];
   selectedVehicleId?: string | null;
+  onVehicleHover?: (vehicleId: string | null) => void;
   onVehicleSelect?: (vehicleId: string) => void;
 }
 
 const DEFAULT_CENTER: [number, number] = [9.748257, 118.771556];
 const DEFAULT_ZOOM = 9;
 
-export default function FleetMap({ vehicles, selectedVehicleId, onVehicleSelect }: FleetMapProps) {
+export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, onVehicleSelect }: FleetMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
+  const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const hasAutoFittedRef = useRef(false);
 
   const visibleVehicles = useMemo(
     () => vehicles.filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng)),
@@ -49,20 +52,31 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleSelect 
       mapRef.current?.remove();
       mapRef.current = null;
       layerRef.current = null;
+      markersRef.current.clear();
     };
   }, []);
 
   useEffect(() => {
     if (!mapRef.current || !layerRef.current) return;
 
-    layerRef.current.clearLayers();
+    const markerByVehicleId = markersRef.current;
+    const visibleVehicleIds = new Set(visibleVehicles.map((vehicle) => vehicle.id));
+
+    // Remove markers for vehicles no longer visible.
+    markerByVehicleId.forEach((marker, vehicleId) => {
+      if (!visibleVehicleIds.has(vehicleId)) {
+        marker.remove();
+        markerByVehicleId.delete(vehicleId);
+      }
+    });
 
     visibleVehicles.forEach((vehicle) => {
       const isSelected = vehicle.id === selectedVehicleId;
       const markerTone = vehicle.status === "Serviceable" ? "ready" : "unavailable";
       const icon = L.divIcon({
         className: "fleet-marker-wrapper",
-        iconSize: [0, 0],
+        iconSize: [110, 56],
+        iconAnchor: [55, 52],
         html: `
           <div class="fleet-marker ${markerTone} ${isSelected ? "selected" : ""}">
             <div class="fleet-label">${vehicle.codename}</div>
@@ -73,37 +87,68 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleSelect 
         `,
       });
 
+      const existingMarker = markerByVehicleId.get(vehicle.id);
+      if (existingMarker) {
+        existingMarker.setLatLng([vehicle.lat as number, vehicle.lng as number]);
+        existingMarker.setIcon(icon);
+        return;
+      }
+
       const marker = L.marker([vehicle.lat as number, vehicle.lng as number], { icon }).addTo(layerRef.current as L.LayerGroup);
+      marker.on("mouseover", () => onVehicleHover?.(vehicle.id));
+      marker.on("mousemove", () => onVehicleHover?.(vehicle.id));
+      marker.on("mouseout", () => onVehicleHover?.(null));
       marker.on("click", () => onVehicleSelect?.(vehicle.id));
+      marker.on("touchstart", () => onVehicleSelect?.(vehicle.id));
+      markerByVehicleId.set(vehicle.id, marker);
     });
 
     if (visibleVehicles.length === 0) {
       mapRef.current.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+      hasAutoFittedRef.current = false;
+    }
+  }, [visibleVehicles, selectedVehicleId, onVehicleHover, onVehicleSelect]);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    if (visibleVehicles.length === 0) {
+      mapRef.current.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+      hasAutoFittedRef.current = false;
       return;
     }
+
+    if (hasAutoFittedRef.current) return;
 
     const bounds = L.latLngBounds(
       visibleVehicles.map((vehicle) => [vehicle.lat as number, vehicle.lng as number] as [number, number])
     );
 
-    // Fit all vehicles while preventing over-zoom on first load.
+    // Fit all vehicles only on initial load/refresh to avoid overriding user zoom.
     mapRef.current.fitBounds(bounds, {
       padding: [60, 60],
       maxZoom: 11,
       animate: true,
     });
-  }, [visibleVehicles, selectedVehicleId, onVehicleSelect]);
+    hasAutoFittedRef.current = true;
+  }, [visibleVehicles]);
 
   return (
     <>
       <div ref={mapContainerRef} className="h-full w-full" />
       <style jsx global>{`
+        .fleet-marker-wrapper {
+          background: transparent;
+          border: 0;
+        }
+
         .fleet-marker {
-          transform: translate(-28px, -52px);
           display: flex;
           flex-direction: column;
           align-items: center;
           gap: 4px;
+          width: 110px;
+          pointer-events: auto;
         }
 
         .fleet-label {

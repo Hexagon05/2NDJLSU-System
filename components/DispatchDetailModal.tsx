@@ -3,19 +3,10 @@
 import { useEffect, useState } from "react";
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, Timestamp, updateDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import dynamic from "next/dynamic";
+import { useAuth } from "@/lib/auth-context";
 import * as XLSX from "xlsx";
 import { getItemClassLookup, resolveSupplyClassLabel, resolveSupplyItemLabel, resolveSupplyQuantityValue } from "@/lib/supply-class-resolver";
 import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
-
-// Dynamic import for Leaflet
-const LeafletMap = dynamic<{ lat: number; lng: number; onChange?: (lat: number, lng: number) => void }>(
-    () => import("@/components/LeafletMap"),
-    {
-        ssr: false,
-        loading: () => <div className="h-44 w-full bg-slate-100 animate-pulse rounded-2xl flex items-center justify-center text-slate-400 text-xs font-medium">Loading Map...</div>
-    }
-);
 
 interface Dispatch {
     id: string;
@@ -27,6 +18,10 @@ interface Dispatch {
     personnels: string;
     truck: string;
     status: string;
+    CurrentLocation?: { lat: number; lng: number; updatedAt?: Timestamp | null };
+    currentLocation?: { lat: number; lng: number; updatedAt?: Timestamp | null };
+    UpdatedAt?: Timestamp | null;
+    updatedAt?: Timestamp | null;
     location?: { lat: number; lng: number; label: string };
     startLocation?: { lat: number; lng: number; label: string };
     deliveryLocation?: { lat: number; lng: number; label: string };
@@ -64,7 +59,7 @@ interface PersonnelReportLocation {
 }
 
 function formatTime(ts: Timestamp | null): string {
-    if (!ts) return "â€”";
+    if (!ts) return "-";
     return ts.toDate().toLocaleString("en-PH", {
         month: "long",
         day: "numeric",
@@ -99,6 +94,7 @@ function extractCoordinates(entry: any): Coordinates | null {
     if (!entry || typeof entry !== "object") return null;
 
     const sourceObjects = [
+        entry.CurrentLocation,
         entry.location,
         entry.currentLocation,
         entry.reportLocation,
@@ -159,6 +155,7 @@ function getReportKind(entry: any): string {
 }
 
 export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Props) {
+    const { user, loading: authLoading } = useAuth();
     const [completing, setCompleting] = useState(false);
     const [canceling, setCanceling] = useState(false);
     const [confirmingDelivery, setConfirmingDelivery] = useState(false);
@@ -175,13 +172,19 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [loadingReportLocation, setLoadingReportLocation] = useState(false);
 
     useEffect(() => {
+        if (authLoading || !user) {
+            return;
+        }
+
         acquireModalLock();
         return () => {
             releaseModalLock();
         };
-    }, []);
+    }, [authLoading, user]);
 
     useEffect(() => {
+        if (authLoading || !user) return;
+
         let mounted = true;
 
         getItemClassLookup()
@@ -197,7 +200,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         return () => {
             mounted = false;
         };
-    }, []);
+    }, [authLoading, user]);
 
     // Mark dispatch as delivered/completed
     const handleCompleteDelivery = async () => {
@@ -412,6 +415,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
                 const dispatchData = dispatchSnap.data() as any;
                 const docLevelLocation = extractCoordinates({
+                    CurrentLocation: dispatchData?.CurrentLocation,
                     currentLocation: dispatchData?.currentLocation,
                     reportLocation: dispatchData?.reportLocation,
                     emergencyLocation: dispatchData?.emergencyLocation,
@@ -461,10 +465,12 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     };
 
     useEffect(() => {
+        if (authLoading || !user) return;
+
         loadPersonnelReportLocation();
         // dispatch.id changes when another dispatch detail is opened.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dispatch.id]);
+    }, [authLoading, user, dispatch.id]);
 
     const handleOpenProofModal = async () => {
         setShowProofModal(true);
@@ -621,6 +627,13 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const canCancel = ["Pending", "Approved", "En Route", "Ongoing"].includes(dispatch.status);
     const deliveryLocation = dispatch.deliveryLocation || dispatch.location;
     const currentOperationalLocation = personnelReportLocation?.location || deliveryLocation;
+    const dispatchUpdatedAt =
+        personnelReportLocation?.timestamp
+        || dispatch.UpdatedAt
+        || dispatch.updatedAt
+        || dispatch.CurrentLocation?.updatedAt
+        || dispatch.currentLocation?.updatedAt
+        || null;
     const requisitionId = dispatch.requisitionNumber || dispatch.requisitionId || dispatch.poNumber || "N/A";
 
     return (
@@ -834,22 +847,44 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         </div>
                     </div>
 
-                    {/* Middle Row: Map & Destination Info */}
+                    {/* Middle Row: Operational Location & Destination Info */}
                     <div className="flex flex-col lg:flex-row gap-8">
-                        {/* Interactive Map Box */}
-                        <div className="w-full lg:w-[400px] h-[300px] flex-shrink-0 relative rounded-3xl overflow-hidden border border-slate-200 shadow-lg bg-slate-50 group">
-                            <LeafletMap
-                                lat={currentOperationalLocation?.lat || 0}
-                                lng={currentOperationalLocation?.lng || 0}
-                            />
-                            <div className="absolute top-4 left-4 z-[1000] bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-lg border border-slate-200 flex items-center gap-2">
-                                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse-slow" />
-                                <span className="text-[10px] font-bold text-slate-800 uppercase tracking-widest">
+                        <div className="w-full lg:w-[400px] flex-shrink-0 rounded-3xl border border-slate-200 shadow-lg bg-slate-50 p-5">
+                            <div className="flex items-center gap-2 mb-4">
+                                <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
                                     {personnelReportLocation ? "Personnel Current Point" : "Target Location"}
-                                </span>
+                                </h3>
                             </div>
-                            <div className="absolute bottom-4 left-4 z-[1000] bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-[9px] font-mono text-white border border-white/20">
-                                {currentOperationalLocation?.lat?.toFixed(6) ?? "0.000000"}, {currentOperationalLocation?.lng?.toFixed(6) ?? "0.000000"}
+
+                            <div className="rounded-3xl bg-white border border-slate-200 p-5 shadow-sm space-y-4">
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">Current Coordinates</p>
+                                    <p className="text-lg font-black text-slate-900">
+                                        {currentOperationalLocation?.lat?.toFixed(6) ?? "0.000000"}, {currentOperationalLocation?.lng?.toFixed(6) ?? "0.000000"}
+                                    </p>
+                                </div>
+
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-1">Location Source</p>
+                                    <p className="text-sm font-semibold text-slate-700">
+                                        {personnelReportLocation ? "Latest personnel report" : "Dispatch target location"}
+                                    </p>
+                                </div>
+
+                                <div className="rounded-2xl bg-emerald-50/70 border border-emerald-100 p-4">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600 mb-1">Label</p>
+                                    <p className="text-sm font-bold text-slate-800">
+                                        {currentOperationalLocation?.label || "Coordinate point established"}
+                                    </p>
+                                </div>
+
+                                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500 mb-1">Last Location Update</p>
+                                    <p className="text-sm font-bold text-slate-800">
+                                        {formatTime(dispatchUpdatedAt)}
+                                    </p>
+                                </div>
                             </div>
                         </div>
 

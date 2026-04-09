@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import { useAuth } from "@/lib/auth-context";
 import { db } from "@/lib/firebase";
 import {
@@ -16,6 +17,18 @@ import {
 } from "firebase/firestore";
 import AppDialog from "@/components/AppDialog";
 import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
+
+const EmergencyLocationMap = dynamic<{ lat: number; lng: number; onChange?: (lat: number, lng: number) => void }>(
+  () => import("@/components/LeafletMap"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-full w-full bg-slate-100 animate-pulse flex items-center justify-center text-xs font-semibold text-slate-500">
+        Loading emergency map...
+      </div>
+    ),
+  }
+);
 
 interface Message {
   id: string;
@@ -381,6 +394,9 @@ export default function TICEmergencyModal({
     .join("\n");
 
   const hasEmergencyContext = Boolean(location || description || imageUrl);
+  const mapsLink = location
+    ? `https://www.google.com/maps?q=${encodeURIComponent(`${location.lat},${location.lng}`)}`
+    : null;
 
   const emergencyInfoMessage: Message | null = hasEmergencyContext
     ? {
@@ -503,6 +519,34 @@ export default function TICEmergencyModal({
               </p>
             </div>
           </div>
+
+          {location && (
+            <div className="mt-4 rounded-2xl border border-red-200 bg-white/90 p-3 shadow-sm">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-red-700">Emergency Button Pinpoint</p>
+                {mapsLink && (
+                  <a
+                    href={mapsLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-lg bg-red-100 px-2.5 py-1 text-[10px] font-bold uppercase text-red-700 hover:bg-red-200"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "0.9rem" }}>open_in_new</span>
+                    Open in Maps
+                  </a>
+                )}
+              </div>
+
+              <div className="h-48 overflow-hidden rounded-xl border border-red-100 shadow-inner">
+                <EmergencyLocationMap lat={location.lat} lng={location.lng} />
+              </div>
+
+              <p className="mt-2 text-[11px] font-mono text-red-700">
+                {location.lat.toFixed(6)}, {location.lng.toFixed(6)}
+                {location.label ? ` • ${location.label}` : ""}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Chat Messages Area */}

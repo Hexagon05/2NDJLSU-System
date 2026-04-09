@@ -1,0 +1,461 @@
+AuthviewModel.kt
+package com.example.logistic_app.ui.viewmodel
+
+import android.annotation.SuppressLint
+import android.app.Application
+import android.net.Uri
+import android.os.Looper
+import android.util.Log
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.logistic_app.data.model.Dispatch
+import com.example.logistic_app.data.model.Personnel
+import com.example.logistic_app.utils.CloudinaryHelper
+import com.google.android.gms.location.*
+import com.google.firebase.Timestamp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+
+/**
+ * AuthViewModel handles authentication and active dispatch state.
+ * 
+ * WEB ADMIN TRACKING NOTE:
+ * Personnel location is synced to the 'CurrentLocation' field in the dispatches collection.
+ * Path: dispatches/{dispatchId}/CurrentLocation
+ */
+class AuthViewModel(application: Application) : AndroidViewModel(application) {
+    private val auth = FirebaseAuth.getInstance()
+    private val db = FirebaseFirestore.getInstance()
+    private var dispatchListener: ListenerRegistration? = null
+    
+    // Location Tracking
+    private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
+    private var locationCallback: LocationCallback? = null
+
+    private val _user = MutableStateFlow<FirebaseUser?>(auth.currentUser)
+    val user: StateFlow<FirebaseUser?> = _user.asStateFlow()
+
+    private val _personnel = MutableStateFlow<Personnel?>(null)
+    val personnel: StateFlow<Personnel?> = _personnel.asStateFlow()
+
+    private val _activeDispatch = MutableStateFlow<Dispatch?>(null)
+    val activeDispatch: StateFlow<Dispatch?> = _activeDispatch.asStateFlow()
+
+    private val _isLoading = mutableStateOf(false)
+    val isLoading: State<Boolean> = _isLoading
+
+    private val _error = mutableStateOf<String?>(null)
+    val error: State<String?> = _error
+
+    init {
+        viewModelScope.launch {
+            _user.collect { currentUser ->
+                if (currentUser != null) {
+                    fetchUserData(currentUser)
+                } else {
+                    clearSession()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            _personnel.collect { p ->
+                if (p != null) {
+                    startDispatchListener(p)
+                }
+            }
+        }
+
+        // Start/Stop tracking based on dispatch status
+        viewModelScope.launch {
+            _activeDispatch.collect { dispatch ->
+                if (dispatch != null) {
+                    startLocationTracking(dispatch.id)
+                } else {
+                    stopLocationTracking()
+                }
+            }
+        }
+    }
+
+    fun signIn(email: String, password: String, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                auth.signInWithEmailAndPassword(email, password).await()
+                _user.value = auth.currentUser
+                onSuccess()
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Authentication failed"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    private fun fetchUserData(currentUser: FirebaseUser) {
+        viewModelScope.launch {
+            try {
+                var userDoc = db.collection("personnelAccount").document(currentUser.uid).get().await()
+                
+                if (userDoc.exists()) {
+                    _personnel.value = userDoc.toObject(Personnel::class.java)?.copy(id = userDoc.id)
+                    return@launch
+                }
+
+                userDoc = db.collection("users").document(currentUser.uid).get().await()
+                if (userDoc.exists()) {
+                    _personnel.value = userDoc.toObject(Personnel::class.java)?.copy(
+                        id = userDoc.id,
+                        role = "admin"
+                    )
+                    return@launch
+                }
+
+                val email = currentUser.email ?: ""
+                if (email.isNotEmpty()) {
+                    var snapshot = db.collection("personnelAccount")
+                        .whereEqualTo("email", email)
+                        .get().await()
+                    
+                    if (snapshot.isEmpty) {
+                        snapshot = db.collection("personnelAccount")
+                            .whereEqualTo("email", email.lowercase())
+                            .get().await()
+                    }
+
+                    if (!snapshot.isEmpty) {
+                        val doc = snapshot.documents.first()
+                        _personnel.value = doc.toObject(Personnel::class.java)?.copy(id = doc.id)
+                        return@launch
+                    }
+                }
+
+                _error.value = "Account details not found in database."
+            } catch (e: Exception) {
+                _error.value = "Error loading account data: ${e.message}"
+            }
+        }
+    }
+
+    private fun startDispatchListener(p: Personnel) {
+        dispatchListener?.remove()
+        val personnelName = "[${p.rank}] ${p.lastName}, ${p.firstName}"
+        
+        dispatchListener = db.collection("dispatches")
+            .whereEqualTo("personnels", personnelName)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    _error.value = "Dispatch Listener Error: ${error.message}"
+                    return@addSnapshotListener
+                }
+                
+                if (snapshot != null && !snapshot.isEmpty) {
+                    val activeOnes = snapshot.documents
+                        .mapNotNull { it.toObject(Dispatch::class.java)?.copy(id = it.id) }
+                        .filter { dispatch ->
+                            val s = dispatch.status.lowercase()
+                            !s.contains("deliver") && 
+                            !s.contains("success") && 
+                            !s.contains("cancel") && 
+                            !s.contains("finish") &&
+                            !s.contains("complete")
+                        }
+                        .sortedByDescending { it.createdAt }
+                    
+                    _activeDispatch.value = activeOnes.firstOrNull()
+                } else {
+                    _activeDispatch.value = null
+                }
+            }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startLocationTracking(dispatchId: String) {
+        stopLocationTracking() // Clean up existing callbacks
+
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000)
+            .setWaitForAccurateLocation(false)
+            .setMinUpdateIntervalMillis(5000)
+            .setMaxUpdateDelayMillis(15000)
+            .build()
+
+        locationCallback = object : LocationCallback() {
+            override fun onLocationResult(locationResult: LocationResult) {
+                val lastLocation = locationResult.lastLocation ?: return
+                
+                /**
+                 * WEB ADMIN LIVE TRACKING SYNC
+                 * Updates 'CurrentLocation' inside the active dispatch document.
+                 */
+                val locationMap = hashMapOf(
+                    "lat" to lastLocation.latitude,
+                    "lng" to lastLocation.longitude,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+
+                db.collection("dispatches").document(dispatchId)
+                    .update("CurrentLocation", locationMap)
+                    .addOnFailureListener { e ->
+                        Log.e("LocationTracking", "Failed to update location: ${e.message}")
+                    }
+            }
+        }
+
+        fusedLocationClient.requestLocationUpdates(
+            locationRequest,
+            locationCallback!!,
+            Looper.getMainLooper()
+        )
+    }
+
+    private fun stopLocationTracking() {
+        locationCallback?.let {
+            fusedLocationClient.removeLocationUpdates(it)
+            locationCallback = null
+        }
+    }
+
+    fun updateDispatchStatus(status: String) {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        viewModelScope.launch {
+            try {
+                db.collection("dispatches").document(dispatchId)
+                    .update("status", status)
+                    .await()
+            } catch (e: Exception) {
+                _error.value = "Failed to update status: ${e.message}"
+            }
+        }
+    }
+
+    fun reportStopOver(location: String, reason: String, onSuccess: () -> Unit) {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        val p = _personnel.value
+        val userId = auth.currentUser?.uid ?: ""
+        val userName = p?.fullName ?: "Personnel"
+        
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                val reportData = hashMapOf(
+                    "type" to "Stop Over",
+                    "location" to location,
+                    "reason" to reason,
+                    "timestamp" to FieldValue.serverTimestamp()
+                )
+                db.collection("dispatches").document(dispatchId)
+                    .collection("status_reports").add(reportData)
+
+                val chatMessage = hashMapOf(
+                    "senderId" to userId,
+                    "senderName" to userName,
+                    "text" to "📍 STOP OVER: $location\nReason: $reason",
+                    "timestamp" to Timestamp.now(),
+                    "isAdmin" to false
+                )
+                
+                db.collection("dispatches").document(dispatchId)
+                    .update(
+                        "status", "Stop Over",
+                        "dispatchChat", FieldValue.arrayUnion(chatMessage),
+                        "lastChatAt", FieldValue.serverTimestamp()
+                    ).await()
+                
+                onSuccess()
+            } catch (e: Exception) {
+                _error.value = "Failed to report stop over: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun reportDelay(estimatedDelay: String, reason: String, onSuccess: () -> Unit) {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        val p = _personnel.value
+        val userId = auth.currentUser?.uid ?: ""
+        val userName = p?.fullName ?: "Personnel"
+        
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                val reportData = hashMapOf(
+                    "type" to "Delay",
+                    "estimatedDelay" to estimatedDelay,
+                    "reason" to reason,
+                    "timestamp" to FieldValue.serverTimestamp()
+                )
+                db.collection("dispatches").document(dispatchId)
+                    .collection("status_reports").add(reportData)
+
+                val chatMessage = hashMapOf(
+                    "senderId" to userId,
+                    "senderName" to userName,
+                    "text" to "⏳ DELAY REPORTED: $estimatedDelay\nReason: $reason",
+                    "timestamp" to Timestamp.now(),
+                    "isAdmin" to false
+                )
+                
+                db.collection("dispatches").document(dispatchId)
+                    .update(
+                        "status", "Delayed",
+                        "dispatchChat", FieldValue.arrayUnion(chatMessage),
+                        "lastChatAt", FieldValue.serverTimestamp()
+                    ).await()
+                
+                onSuccess()
+            } catch (e: Exception) {
+                _error.value = "Failed to report delay: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun resumeDispatch() {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        val p = _personnel.value
+        val userId = auth.currentUser?.uid ?: ""
+        val userName = p?.fullName ?: "Personnel"
+        
+        viewModelScope.launch {
+            try {
+                val reportData = hashMapOf(
+                    "type" to "Resume",
+                    "timestamp" to FieldValue.serverTimestamp()
+                )
+                db.collection("dispatches").document(dispatchId)
+                    .collection("status_reports").add(reportData)
+
+                val chatMessage = hashMapOf(
+                    "senderId" to userId,
+                    "senderName" to userName,
+                    "text" to "🚛 DISPATCH RESUMED",
+                    "timestamp" to Timestamp.now(),
+                    "isAdmin" to false
+                )
+                
+                db.collection("dispatches").document(dispatchId)
+                    .update(
+                        "status", "Ongoing",
+                        "dispatchChat", FieldValue.arrayUnion(chatMessage),
+                        "lastChatAt", FieldValue.serverTimestamp()
+                    ).await()
+            } catch (e: Exception) {
+                _error.value = "Failed to resume dispatch: ${e.message}"
+            }
+        }
+    }
+
+    fun confirmDelivery(
+        receiverName: String,
+        arrivalTime: String,
+        imageUri: Uri?,
+        onSuccess: () -> Unit
+    ) {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                var imageUrl = ""
+                if (imageUri != null) {
+                    imageUrl = CloudinaryHelper.uploadImage(imageUri)
+                }
+
+                val updates = hashMapOf(
+                    "status" to "Delivered",
+                    "receiverName" to receiverName,
+                    "arrivalTime" to arrivalTime,
+                    "proofOfDelivery" to imageUrl
+                )
+
+                db.collection("dispatches").document(dispatchId)
+                    .update(updates as Map<String, Any>)
+                    .await()
+                
+                _activeDispatch.value = null
+                onSuccess()
+            } catch (e: Exception) {
+                _error.value = "Delivery confirmation failed: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    private fun clearSession() {
+        dispatchListener?.remove()
+        stopLocationTracking()
+        _personnel.value = null
+        _activeDispatch.value = null
+    }
+
+    fun signOut() {
+        auth.signOut()
+        _user.value = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        dispatchListener?.remove()
+        stopLocationTracking()
+    }
+}
+
+
+
+//dispatches.kt
+
+package com.example.logistic_app.data.model
+
+import com.google.firebase.Timestamp
+
+data class Dispatch(
+    val id: String = "",
+    val dispatchId: String = "",
+    val location: DispatchLocation = DispatchLocation(),
+    val officer: String = "",
+    val personnels: String = "",
+    val truck: String = "",
+    val supplies: List<SupplyItem> = emptyList(),
+    val othersNote: String = "",
+    val status: String = "Pending",
+    val createdAt: Timestamp? = null,
+    val dispatchChat: List<ChatMessage> = emptyList(),
+    val lastChatAt: Timestamp? = null,
+    // WEB ADMIN LIVE TRACKING: This field holds the real-time coordinates of the personnel
+    val CurrentLocation: PersonnelLocation? = null
+)
+
+data class DispatchLocation(
+    val lat: Double = 0.0,
+    val lng: Double = 0.0,
+    val label: String = ""
+)
+
+data class PersonnelLocation(
+    val lat: Double = 0.0,
+    val lng: Double = 0.0,
+    val updatedAt: Timestamp? = null
+)
+
+data class SupplyItem(
+    val category: String = "",
+    val item: String = "",
+    val quantity: Long = 0L
+)

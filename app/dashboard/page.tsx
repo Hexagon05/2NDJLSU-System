@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import DispatchModal from "@/components/DispatchModal";
@@ -13,7 +13,6 @@ import {
   collection,
   query,
   orderBy,
-  limit,
   onSnapshot,
   Timestamp,
   where,
@@ -46,6 +45,10 @@ interface Dispatch {
   personnels: string;
   truck: string;
   status: string;
+  CurrentLocation?: { lat: number; lng: number; updatedAt?: Timestamp | null };
+  currentLocation?: { lat: number; lng: number; updatedAt?: Timestamp | null };
+  UpdatedAt?: Timestamp | null;
+  updatedAt?: Timestamp | null;
   location?: { lat: number; lng: number; label: string };
   startLocation?: { lat: number; lng: number; label: string };
   deliveryLocation?: { lat: number; lng: number; label: string };
@@ -115,33 +118,134 @@ export default function Dashboard() {
   const [selectedVehicleDispatch, setSelectedVehicleDispatch] = useState<Dispatch | null>(null);
   const [showVehicleDispatchPanel, setShowVehicleDispatchPanel] = useState(false);
   const [vehicleHint, setVehicleHint] = useState("");
+  const [lockedVehicleId, setLockedVehicleId] = useState<string | null>(null);
+  const hoveredVehicleRef = useRef<string | null>(null);
 
-  const ACTIVE_DISPATCH_STATUSES = ["Pending", "Approved", "En Route", "Ongoing"];
+  const TERMINAL_STATUS_KEYWORDS = [
+    "delivered",
+    "completed",
+    "successful dispatch",
+    "cancelled",
+    "canceled",
+    "finish",
+  ];
 
   const normalize = (value: string | undefined | null): string =>
     String(value || "").trim().toLowerCase();
 
-  const isActiveDispatch = (status: string | undefined): boolean =>
-    ACTIVE_DISPATCH_STATUSES.includes(String(status || "").trim());
+  const compactNormalize = (value: string | undefined | null): string =>
+    normalize(value).replace(/[^a-z0-9]+/g, "");
 
-  const findActiveDispatchForVehicle = (vehicle: Vehicle): Dispatch | null => {
+  const isActiveDispatch = (status: string | undefined): boolean => {
+    const normalizedStatus = normalize(status).replace(/[_-]+/g, " ");
+    if (!normalizedStatus) return false;
+
+    return !TERMINAL_STATUS_KEYWORDS.some((keyword) => normalizedStatus.includes(keyword));
+  };
+
+  const getDispatchCurrentLocation = (dispatch: Dispatch | null): { lat: number; lng: number } | null => {
+    if (!dispatch) return null;
+
+    const source = dispatch.CurrentLocation || dispatch.currentLocation;
+    if (!source) return null;
+
+    const lat = Number((source as { lat?: unknown }).lat);
+    const lng = Number((source as { lng?: unknown }).lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    return { lat, lng };
+  };
+
+  const getDispatchUpdatedAt = (dispatch: Dispatch | null): Timestamp | null => {
+    if (!dispatch) return null;
+
+    if (dispatch.UpdatedAt instanceof Timestamp) return dispatch.UpdatedAt;
+    if (dispatch.updatedAt instanceof Timestamp) return dispatch.updatedAt;
+
+    const nestedUpdatedAt = dispatch.CurrentLocation?.updatedAt || dispatch.currentLocation?.updatedAt;
+    if (nestedUpdatedAt instanceof Timestamp) return nestedUpdatedAt;
+
+    return null;
+  };
+
+  const getDispatchSortTime = (dispatch: Dispatch): number => {
+    const directUpdated = dispatch.UpdatedAt || dispatch.updatedAt;
+    const nestedUpdated = dispatch.CurrentLocation?.updatedAt || dispatch.currentLocation?.updatedAt;
+    const candidate = directUpdated || nestedUpdated || dispatch.createdAt;
+    return candidate instanceof Timestamp ? candidate.toMillis() : 0;
+  };
+
+  const scoreDispatchVehicleMatch = (dispatch: Dispatch, vehicle: Vehicle): number => {
     const vehicleCodename = normalize(vehicle.codename);
     const vehiclePlate = normalize(vehicle.plate);
+    const vehiclePersonnel = normalize(vehicle.personnelName);
+    const vehicleCodenameCompact = compactNormalize(vehicle.codename);
+    const vehiclePlateCompact = compactNormalize(vehicle.plate);
+    const vehiclePersonnelCompact = compactNormalize(vehicle.personnelName);
 
-    return (
-      dispatches.find((dispatch) => {
-        if (!isActiveDispatch(dispatch.status)) return false;
+    const truckValue = normalize(dispatch.truck);
+    const truckCompact = compactNormalize(dispatch.truck);
+    const personnelValue = normalize(dispatch.personnels);
+    const personnelCompact = compactNormalize(dispatch.personnels);
 
-        const truckValue = normalize(dispatch.truck);
-        if (!truckValue) return false;
+    // Prefer explicit truck assignment first.
+    if (truckValue.length > 0) {
+      if (truckCompact === vehicleCodenameCompact && vehicleCodenameCompact.length > 0) return 120;
+      if (truckValue === vehicleCodename && vehicleCodename.length > 0) return 115;
+      if (truckCompact.includes(vehicleCodenameCompact) && vehicleCodenameCompact.length > 0) return 100;
+      if (truckValue.includes(vehicleCodename) && vehicleCodename.length > 0) return 95;
 
-        return (
-          truckValue === vehicleCodename
-          || truckValue.includes(vehicleCodename)
-          || (vehiclePlate.length > 0 && (truckValue === vehiclePlate || truckValue.includes(vehiclePlate)))
-        );
-      }) || null
-    );
+      if (truckCompact === vehiclePlateCompact && vehiclePlateCompact.length > 0) return 90;
+      if (truckValue === vehiclePlate && vehiclePlate.length > 0) return 85;
+      if (truckCompact.includes(vehiclePlateCompact) && vehiclePlateCompact.length > 0) return 75;
+      if (truckValue.includes(vehiclePlate) && vehiclePlate.length > 0) return 70;
+    }
+
+    // Fallback to personnel only when dispatch has no truck value.
+    if (truckValue.length === 0 && personnelValue.length > 0 && vehiclePersonnel.length > 0) {
+      if (personnelCompact === vehiclePersonnelCompact && vehiclePersonnelCompact.length > 0) return 55;
+      if (personnelValue === vehiclePersonnel) return 50;
+      if (personnelCompact.includes(vehiclePersonnelCompact) && vehiclePersonnelCompact.length > 0) return 45;
+      if (vehiclePersonnelCompact.includes(personnelCompact) && personnelCompact.length > 0) return 40;
+      if (personnelValue.includes(vehiclePersonnel) || vehiclePersonnel.includes(personnelValue)) return 35;
+    }
+
+    return -1;
+  };
+
+  const vehicleDispatchByVehicleId = (() => {
+    const mapping = new Map<string, Dispatch>();
+    const assignedVehicleIds = new Set<string>();
+
+    const activeDispatches = dispatches
+      .filter((dispatch) => isActiveDispatch(dispatch.status))
+      .sort((a, b) => getDispatchSortTime(b) - getDispatchSortTime(a));
+
+    activeDispatches.forEach((dispatch) => {
+      let bestVehicleId: string | null = null;
+      let bestScore = -1;
+
+      vehicles.forEach((vehicle) => {
+        if (assignedVehicleIds.has(vehicle.id)) return;
+
+        const score = scoreDispatchVehicleMatch(dispatch, vehicle);
+        if (score > bestScore) {
+          bestScore = score;
+          bestVehicleId = vehicle.id;
+        }
+      });
+
+      if (bestVehicleId && bestScore >= 0) {
+        mapping.set(bestVehicleId, dispatch);
+        assignedVehicleIds.add(bestVehicleId);
+      }
+    });
+
+    return mapping;
+  })();
+
+  const findActiveDispatchForVehicle = (vehicle: Vehicle): Dispatch | null => {
+    return vehicleDispatchByVehicleId.get(vehicle.id) || null;
   };
 
   const filteredVehicles = vehicles.filter((vehicle) => {
@@ -163,7 +267,18 @@ export default function Dashboard() {
     return true;
   });
 
-  const selectedVehicleData = vehicles.find((vehicle) => vehicle.id === selectedVehicle) || null;
+  const vehiclesForMap = vehicles.map((vehicle) => {
+    const activeDispatch = findActiveDispatchForVehicle(vehicle);
+    const liveLocation = getDispatchCurrentLocation(activeDispatch);
+
+    return {
+      ...vehicle,
+      lat: liveLocation?.lat ?? vehicle.lat,
+      lng: liveLocation?.lng ?? vehicle.lng,
+    };
+  });
+
+  const selectedVehicleData = vehiclesForMap.find((vehicle) => vehicle.id === selectedVehicle) || null;
   const activeDispatchCount = dispatches.filter((dispatch) => isActiveDispatch(dispatch.status)).length;
 
   // Predefined coordinates to assign to vehicles from database
@@ -179,7 +294,7 @@ export default function Dashboard() {
     { lat: 10.500585, lng: 119.8473964 },
   ];
 
-  const handleVehicleClick = (vehicle: Vehicle) => {
+  const showDispatchPreview = (vehicle: Vehicle, lockPanel: boolean) => {
     setSelectedVehicle(vehicle.id);
 
     const activeDispatch = findActiveDispatchForVehicle(vehicle);
@@ -187,11 +302,43 @@ export default function Dashboard() {
       setSelectedVehicleDispatch(activeDispatch);
       setShowVehicleDispatchPanel(true);
       setVehicleHint("");
+      if (lockPanel) {
+        setLockedVehicleId(vehicle.id);
+      }
     } else {
       setSelectedVehicleDispatch(null);
       setShowVehicleDispatchPanel(false);
-      setVehicleHint(`${vehicle.codename} has no active dispatch at the moment.`);
+      if (lockPanel) {
+        setLockedVehicleId(null);
+        setVehicleHint(`${vehicle.codename} has no active dispatch at the moment.`);
+      } else {
+        setVehicleHint("");
+      }
     }
+  };
+
+  const handleVehicleClick = (vehicle: Vehicle) => {
+    showDispatchPreview(vehicle, true);
+  };
+
+  const handleVehicleHover = (vehicleId: string | null) => {
+    if (hoveredVehicleRef.current === vehicleId) return;
+    hoveredVehicleRef.current = vehicleId;
+
+    if (lockedVehicleId) return;
+
+    if (!vehicleId) {
+      setSelectedVehicle(null);
+      setShowVehicleDispatchPanel(false);
+      setSelectedVehicleDispatch(null);
+      setVehicleHint("");
+      return;
+    }
+
+    const hoveredVehicle = vehicles.find((vehicle) => vehicle.id === vehicleId);
+    if (!hoveredVehicle) return;
+
+    showDispatchPreview(hoveredVehicle, false);
   };
 
   // Fetch vehicles from Firebase
@@ -232,10 +379,11 @@ export default function Dashboard() {
 
   // Live dispatches listener
   useEffect(() => {
+    if (loading || !user) return;
+
     const q = query(
       collection(db, "dispatches"),
-      orderBy("createdAt", "desc"),
-      limit(10)
+      orderBy("createdAt", "desc")
     );
     const unsub = onSnapshot(q, (snap) => {
       setDispatches(
@@ -243,7 +391,17 @@ export default function Dashboard() {
       );
     });
     return () => unsub();
-  }, [dispatchRefresh]);
+  }, [dispatchRefresh, loading, user]);
+
+  // Keep modal dispatch details synced with live Firestore updates (e.g., UpdatedAt).
+  useEffect(() => {
+    if (!selectedDispatch?.id) return;
+
+    const latestSelectedDispatch = dispatches.find((dispatch) => dispatch.id === selectedDispatch.id);
+    if (latestSelectedDispatch) {
+      setSelectedDispatch(latestSelectedDispatch);
+    }
+  }, [dispatches, selectedDispatch?.id]);
 
   // Fetch metrics data
   useEffect(() => {
@@ -377,6 +535,8 @@ export default function Dashboard() {
       time: getRelativeTime(d.createdAt),
     };
   });
+
+  const recentDispatches = dispatches.slice(0, 10);
 
   const canCancelDispatch = (status: string) => {
     return ["Pending", "Approved", "En Route", "Ongoing"].includes(status);
@@ -676,16 +836,28 @@ export default function Dashboard() {
                 {/* Map Stage */}
                 <div className="rounded-2xl border border-slate-200 bg-slate-100/60 p-2 shadow-inner min-h-0 relative">
                   <div className="h-full min-h-[360px] rounded-xl overflow-hidden border-2 border-slate-200 shadow-xl shadow-slate-300/40 relative">
-                    <FleetMap
-                      vehicles={vehicles}
-                      selectedVehicleId={selectedVehicle}
-                      onVehicleSelect={(vehicleId) => {
-                        const clickedVehicle = vehicles.find((vehicle) => vehicle.id === vehicleId);
-                        if (clickedVehicle) {
-                          handleVehicleClick(clickedVehicle);
-                        }
-                      }}
-                    />
+                    {selectedDispatch ? (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 px-6 text-center">
+                        <div className="max-w-sm rounded-2xl border border-slate-200 bg-white/90 px-5 py-4 shadow-lg">
+                          <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Dispatch Details Open</p>
+                          <p className="mt-2 text-sm font-semibold text-slate-700">
+                            The dashboard map is hidden while the dispatch detail modal is open.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <FleetMap
+                        vehicles={vehiclesForMap}
+                        selectedVehicleId={selectedVehicle}
+                        onVehicleHover={handleVehicleHover}
+                        onVehicleSelect={(vehicleId) => {
+                          const clickedVehicle = vehicles.find((vehicle) => vehicle.id === vehicleId);
+                          if (clickedVehicle) {
+                            handleVehicleClick(clickedVehicle);
+                          }
+                        }}
+                      />
+                    )}
 
                     <div className="absolute left-3 top-3 z-10 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-lg backdrop-blur-sm">
                       <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Focused Vehicle</p>
@@ -699,14 +871,18 @@ export default function Dashboard() {
                     )}
 
                     {showVehicleDispatchPanel && selectedVehicleDispatch && (
-                      <div className="absolute top-3 right-3 z-20 w-[350px] max-w-[92%] rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-md shadow-2xl overflow-hidden">
+                      <div className="absolute top-3 right-3 z-[1200] w-[350px] max-w-[92%] rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-md shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between px-4 py-3 bg-slate-900 text-white">
                           <div>
                             <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Active Dispatch</p>
                             <p className="text-sm font-black">{selectedVehicleDispatch.dispatchId}</p>
                           </div>
                           <button
-                            onClick={() => setShowVehicleDispatchPanel(false)}
+                            onClick={() => {
+                              setShowVehicleDispatchPanel(false);
+                              setLockedVehicleId(null);
+                              hoveredVehicleRef.current = null;
+                            }}
                             className="rounded p-1.5 hover:bg-white/15"
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>close</span>
@@ -714,6 +890,12 @@ export default function Dashboard() {
                         </div>
 
                         <div className="p-4 space-y-3 text-sm">
+                          {(() => {
+                            const liveLocation = getDispatchCurrentLocation(selectedVehicleDispatch);
+                            const lastUpdatedAt = getDispatchUpdatedAt(selectedVehicleDispatch);
+
+                            return (
+                              <>
                           <div className="flex items-center justify-between">
                             <span className="text-slate-500 font-semibold">Status</span>
                             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUS_STYLES[selectedVehicleDispatch.status] ?? "bg-slate-100 text-slate-600"}`}>
@@ -737,17 +919,31 @@ export default function Dashboard() {
                           <div className="flex items-start justify-between gap-3">
                             <span className="text-slate-500 font-semibold">Coordinates</span>
                             <span className="text-slate-700 font-mono text-xs text-right">
-                              {(selectedVehicleDispatch.deliveryLocation?.lat ?? selectedVehicleDispatch.location?.lat ?? 0).toFixed(6)}, {(selectedVehicleDispatch.deliveryLocation?.lng ?? selectedVehicleDispatch.location?.lng ?? 0).toFixed(6)}
+                              {(liveLocation?.lat ?? selectedVehicleDispatch.deliveryLocation?.lat ?? selectedVehicleDispatch.location?.lat ?? 0).toFixed(6)}, {(liveLocation?.lng ?? selectedVehicleDispatch.deliveryLocation?.lng ?? selectedVehicleDispatch.location?.lng ?? 0).toFixed(6)}
+                            </span>
+                          </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <span className="text-slate-500 font-semibold">Last Location Update</span>
+                            <span className="text-slate-700 text-xs font-semibold text-right">
+                              {formatTime(lastUpdatedAt)}
                             </span>
                           </div>
 
                           <button
-                            onClick={() => setSelectedDispatch(selectedVehicleDispatch)}
+                            onClick={() => {
+                              setShowVehicleDispatchPanel(false);
+                              setLockedVehicleId(null);
+                              hoveredVehicleRef.current = null;
+                              setSelectedDispatch(selectedVehicleDispatch);
+                            }}
                             className="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:from-blue-700 hover:to-indigo-700 transition-colors"
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>open_in_new</span>
                             Open Full Dispatch Details
                           </button>
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                     )}
@@ -806,14 +1002,14 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar">
-                  {dispatches.length === 0 ? (
+                  {recentDispatches.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                       <span className="material-symbols-outlined mb-2" style={{ fontSize: "2.5rem" }}>local_shipping</span>
                       <p className="text-xs font-semibold">No dispatches yet</p>
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-50">
-                      {dispatches.map((d) => (
+                      {recentDispatches.map((d) => (
                         <div
                           key={d.id}
                           onClick={() => setSelectedDispatch(d)}
