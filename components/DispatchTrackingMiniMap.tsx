@@ -103,9 +103,12 @@ export default function DispatchTrackingMiniMap({
     }, []);
 
     useEffect(() => {
-        if (!mapRef.current || !layerRef.current) return;
+        const map = mapRef.current;
+        const layer = layerRef.current;
 
-        layerRef.current.clearLayers();
+        if (!map || !layer) return;
+
+        layer.clearLayers();
 
         const boundsPoints: [number, number][] = [];
 
@@ -115,7 +118,7 @@ export default function DispatchTrackingMiniMap({
                 icon: buildPin("#3b82f6", "S"),
             })
                 .bindPopup(`<b>Start Location</b><br/>${startLocation.label || "Dispatch start"}`)
-                .addTo(layerRef.current);
+                .addTo(layer);
         }
 
         if (deliveryLocation) {
@@ -124,7 +127,7 @@ export default function DispatchTrackingMiniMap({
                 icon: buildPin("#16a34a", "D"),
             })
                 .bindPopup(`<b>Delivery Location</b><br/>${deliveryLocation.label || "Dispatch target"}`)
-                .addTo(layerRef.current);
+                .addTo(layer);
         }
 
         const pathPoints: [number, number][] = sortedMovement.map((point) => [point.location.lat, point.location.lng]);
@@ -136,7 +139,7 @@ export default function DispatchTrackingMiniMap({
                 weight: 3,
                 opacity: 0.7,
                 dashArray: "6 5",
-            }).addTo(layerRef.current);
+            }).addTo(layer);
         }
 
         reportEvents.forEach((event, index) => {
@@ -154,16 +157,16 @@ export default function DispatchTrackingMiniMap({
                 icon: buildPin(markerColor, eventLabel),
             })
                 .bindPopup(popupLines.join("<br/>"))
-                .addTo(layerRef.current);
+                .addTo(layer);
         });
 
         if (boundsPoints.length === 0) {
-            mapRef.current.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+            map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
             return;
         }
 
         const bounds = L.latLngBounds(boundsPoints);
-        mapRef.current.fitBounds(bounds, {
+        map.fitBounds(bounds, {
             padding: [26, 26],
             maxZoom: 16,
             animate: true,
