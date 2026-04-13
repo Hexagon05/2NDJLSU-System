@@ -5,8 +5,26 @@ import { collection, doc, getDoc, getDocs, limit, orderBy, query, Timestamp, upd
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import * as XLSX from "xlsx";
+import dynamic from "next/dynamic";
 import { getItemClassLookup, resolveSupplyClassLabel, resolveSupplyItemLabel, resolveSupplyQuantityValue } from "@/lib/supply-class-resolver";
 import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
+
+const DispatchTrackingMiniMap = dynamic<{
+    movementPoints: DispatchTrackingPoint[];
+    reportEvents: DispatchTrackingPoint[];
+    startLocation?: Coordinates;
+    deliveryLocation?: Coordinates;
+}>(
+    () => import("@/components/DispatchTrackingMiniMap"),
+    {
+        ssr: false,
+        loading: () => (
+            <div className="h-full w-full bg-slate-100 animate-pulse rounded-2xl flex items-center justify-center text-slate-500 text-xs font-semibold">
+                Loading live tracking map...
+            </div>
+        ),
+    }
+);
 
 interface Dispatch {
     id: string;
@@ -52,6 +70,14 @@ interface Coordinates {
 }
 
 interface PersonnelReportLocation {
+    location: Coordinates;
+    timestamp: Timestamp | null;
+    reportText: string;
+    reportKind: string;
+}
+
+interface DispatchTrackingPoint {
+    id: string;
     location: Coordinates;
     timestamp: Timestamp | null;
     reportText: string;
@@ -142,16 +168,47 @@ function isDelayBreakOrStopOverReport(entry: any): boolean {
         || signal.includes("rest");
 }
 
+function isEmergencyReport(entry: any): boolean {
+    const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
+    const kind = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
+    const signal = `${text} ${kind}`;
+    return signal.includes("emergency") || signal.includes("sos") || signal.includes("panic");
+}
+
+function isConfirmDeliveryReport(entry: any): boolean {
+    const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
+    const kind = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
+    const signal = `${text} ${kind}`;
+
+    return signal.includes("confirm delivery")
+        || signal.includes("delivery confirmed")
+        || signal.includes("confirm-delivery")
+        || signal.includes("proof of delivery")
+        || signal.includes("confirm_delivered");
+}
+
 function getReportKind(entry: any): string {
+    if (isEmergencyReport(entry)) {
+        return "Emergency";
+    }
+
+    if (isConfirmDeliveryReport(entry)) {
+        return "Confirm Delivery";
+    }
+
     if (isDelayBreakOrStopOverReport(entry)) {
         const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
         if (text.includes("delay")) return "Delay";
-        if (text.includes("break") || text.includes("rest")) return "Break";
-        if (text.includes("stop over") || text.includes("stopover")) return "Stop Over";
-        return "Status Update";
+        if (text.includes("break") || text.includes("rest")) return "Delay";
+        if (text.includes("stop over") || text.includes("stopover")) return "Delay";
+        return "Delay";
     }
 
     return "Location Update";
+}
+
+function isTrackedReportKind(kind: string): boolean {
+    return kind === "Delay" || kind === "Emergency" || kind === "Confirm Delivery";
 }
 
 export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Props) {
@@ -170,6 +227,9 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [itemClassLookup, setItemClassLookup] = useState<Map<string, string>>(new Map());
     const [personnelReportLocation, setPersonnelReportLocation] = useState<PersonnelReportLocation | null>(null);
     const [loadingReportLocation, setLoadingReportLocation] = useState(false);
+    const [trackingEvents, setTrackingEvents] = useState<DispatchTrackingPoint[]>([]);
+    const [movementPoints, setMovementPoints] = useState<DispatchTrackingPoint[]>([]);
+    const [loadingTrackingOverview, setLoadingTrackingOverview] = useState(false);
 
     useEffect(() => {
         if (authLoading || !user) {
@@ -395,7 +455,8 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             const prioritized = messages.find((entry) => {
                 const location = extractCoordinates(entry);
                 const isPersonnel = entry?.isAdmin !== true;
-                return Boolean(location) && isPersonnel && isDelayBreakOrStopOverReport(entry);
+                const reportKind = getReportKind(entry);
+                return Boolean(location) && isPersonnel && isTrackedReportKind(reportKind);
             });
 
             const fallback = messages.find((entry) => {
@@ -464,10 +525,78 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         }
     };
 
+    const loadTrackingOverview = async () => {
+        if (!dispatch.id) {
+            setTrackingEvents([]);
+            setMovementPoints([]);
+            return;
+        }
+
+        setLoadingTrackingOverview(true);
+        try {
+            const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
+            const snap = await getDocs(query(messagesRef, orderBy("timestamp", "asc"), limit(250)));
+
+            const movement: DispatchTrackingPoint[] = [];
+            const trackedReports: DispatchTrackingPoint[] = [];
+
+            snap.docs.forEach((messageDoc, index) => {
+                const entry = messageDoc.data() as any;
+                const location = extractCoordinates(entry);
+                const isPersonnel = entry?.isAdmin !== true;
+                if (!location || !isPersonnel) return;
+
+                const reportKind = getReportKind(entry);
+                const reportText = String(entry?.text || entry?.message || entry?.statusNote || "").trim();
+                const point: DispatchTrackingPoint = {
+                    id: `msg-${messageDoc.id}-${index}`,
+                    location,
+                    timestamp: (entry?.timestamp as Timestamp) || null,
+                    reportText,
+                    reportKind,
+                };
+
+                movement.push(point);
+                if (isTrackedReportKind(reportKind)) {
+                    trackedReports.push(point);
+                }
+            });
+
+            if (movement.length === 0) {
+                const fallbackDocLocation = extractCoordinates({
+                    CurrentLocation: dispatch.CurrentLocation,
+                    currentLocation: dispatch.currentLocation,
+                    deliveryLocation: dispatch.deliveryLocation,
+                    location: dispatch.location,
+                });
+
+                if (fallbackDocLocation) {
+                    movement.push({
+                        id: "dispatch-fallback-location",
+                        location: fallbackDocLocation,
+                        timestamp: dispatch.updatedAt || dispatch.UpdatedAt || null,
+                        reportKind: "Location Update",
+                        reportText: "Location from dispatch document",
+                    });
+                }
+            }
+
+            setMovementPoints(movement);
+            setTrackingEvents(trackedReports);
+        } catch (error) {
+            console.error("Error loading tracking overview:", error);
+            setMovementPoints([]);
+            setTrackingEvents([]);
+        } finally {
+            setLoadingTrackingOverview(false);
+        }
+    };
+
     useEffect(() => {
         if (authLoading || !user) return;
 
         loadPersonnelReportLocation();
+        loadTrackingOverview();
         // dispatch.id changes when another dispatch detail is opened.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [authLoading, user, dispatch.id]);
@@ -635,6 +764,9 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         || dispatch.currentLocation?.updatedAt
         || null;
     const requisitionId = dispatch.requisitionNumber || dispatch.requisitionId || dispatch.poNumber || "N/A";
+    const delayEvents = trackingEvents.filter((event) => event.reportKind === "Delay");
+    const emergencyEvents = trackingEvents.filter((event) => event.reportKind === "Emergency");
+    const confirmDeliveryEvents = trackingEvents.filter((event) => event.reportKind === "Confirm Delivery");
 
     return (
         <>
@@ -951,6 +1083,97 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         <p className="text-sm font-bold text-slate-700">{requisitionId}</p>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Live Tracking Minimap and Report Coordinates */}
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Truck Live Tracking Overview</h3>
+                            <p className="text-[11px] font-semibold text-slate-500">
+                                {movementPoints.length} movement points • {trackingEvents.length} tracked reports
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-5">
+                            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                                <div className="h-[320px]">
+                                    {loadingTrackingOverview ? (
+                                        <div className="h-full w-full bg-slate-100 animate-pulse flex items-center justify-center text-xs font-semibold text-slate-500">
+                                            Loading truck movement map...
+                                        </div>
+                                    ) : (
+                                        <DispatchTrackingMiniMap
+                                            movementPoints={movementPoints}
+                                            reportEvents={trackingEvents}
+                                            startLocation={dispatch.startLocation}
+                                            deliveryLocation={deliveryLocation}
+                                        />
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-1 gap-3">
+                                    <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
+                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-700">Delay Reports</p>
+                                        <p className="text-xl font-black text-amber-900">{delayEvents.length}</p>
+                                        <p className="text-[11px] text-amber-800/80">
+                                            {delayEvents[delayEvents.length - 1]?.location?.lat?.toFixed(6) ?? "-"}, {delayEvents[delayEvents.length - 1]?.location?.lng?.toFixed(6) ?? "-"}
+                                        </p>
+                                    </div>
+                                    <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-3">
+                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-700">Emergency Reports</p>
+                                        <p className="text-xl font-black text-rose-900">{emergencyEvents.length}</p>
+                                        <p className="text-[11px] text-rose-800/80">
+                                            {emergencyEvents[emergencyEvents.length - 1]?.location?.lat?.toFixed(6) ?? "-"}, {emergencyEvents[emergencyEvents.length - 1]?.location?.lng?.toFixed(6) ?? "-"}
+                                        </p>
+                                    </div>
+                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Confirm Delivery</p>
+                                        <p className="text-xl font-black text-emerald-900">{confirmDeliveryEvents.length}</p>
+                                        <p className="text-[11px] text-emerald-800/80">
+                                            {confirmDeliveryEvents[confirmDeliveryEvents.length - 1]?.location?.lat?.toFixed(6) ?? "-"}, {confirmDeliveryEvents[confirmDeliveryEvents.length - 1]?.location?.lng?.toFixed(6) ?? "-"}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                            <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Report Coordinates Timeline</p>
+                                <p className="text-[11px] font-medium text-slate-500">Delay / Emergency / Confirm Delivery</p>
+                            </div>
+
+                            <div className="max-h-64 overflow-y-auto">
+                                {trackingEvents.length === 0 ? (
+                                    <p className="px-4 py-6 text-sm text-slate-500">No tracked report coordinates yet for this dispatch.</p>
+                                ) : (
+                                    <table className="w-full text-xs">
+                                        <thead>
+                                            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider">
+                                                <th className="px-4 py-2 text-left">Report</th>
+                                                <th className="px-4 py-2 text-left">Coordinates</th>
+                                                <th className="px-4 py-2 text-left">Timestamp</th>
+                                                <th className="px-4 py-2 text-left">Details</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {trackingEvents.map((event) => (
+                                                <tr key={event.id} className="hover:bg-slate-50/70">
+                                                    <td className="px-4 py-2 font-bold text-slate-700">{event.reportKind}</td>
+                                                    <td className="px-4 py-2 font-mono text-slate-700">
+                                                        {event.location.lat.toFixed(6)}, {event.location.lng.toFixed(6)}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-slate-600">{formatTime(event.timestamp)}</td>
+                                                    <td className="px-4 py-2 text-slate-600">{event.reportText || "-"}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
                             </div>
                         </div>
                     </div>

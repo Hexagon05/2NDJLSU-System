@@ -21,6 +21,7 @@ interface FleetMapProps {
 
 const DEFAULT_CENTER: [number, number] = [9.748257, 118.771556];
 const DEFAULT_ZOOM = 9;
+const SELECTED_VEHICLE_ZOOM = 14;
 
 export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, onVehicleSelect }: FleetMapProps) {
   const mapRef = useRef<L.Map | null>(null);
@@ -28,6 +29,7 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const hasAutoFittedRef = useRef(false);
+  const lastFocusedVehicleIdRef = useRef<string | null>(null);
 
   const visibleVehicles = useMemo(
     () => vehicles.filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng)),
@@ -132,6 +134,32 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
     });
     hasAutoFittedRef.current = true;
   }, [visibleVehicles]);
+
+  useEffect(() => {
+    if (!mapRef.current || !selectedVehicleId) {
+      lastFocusedVehicleIdRef.current = null;
+      return;
+    }
+
+    const selectedVehicle = visibleVehicles.find((vehicle) => vehicle.id === selectedVehicleId);
+    if (!selectedVehicle || !Number.isFinite(selectedVehicle.lat) || !Number.isFinite(selectedVehicle.lng)) return;
+
+    const currentZoom = mapRef.current.getZoom();
+    const targetZoom = Math.max(currentZoom, SELECTED_VEHICLE_ZOOM);
+
+    // Prevent repeated flyTo when the same selected vehicle does not change.
+    if (lastFocusedVehicleIdRef.current === selectedVehicleId) {
+      mapRef.current.panTo([selectedVehicle.lat as number, selectedVehicle.lng as number], { animate: true });
+      return;
+    }
+
+    mapRef.current.flyTo([selectedVehicle.lat as number, selectedVehicle.lng as number], targetZoom, {
+      animate: true,
+      duration: 0.8,
+    });
+
+    lastFocusedVehicleIdRef.current = selectedVehicleId;
+  }, [selectedVehicleId, visibleVehicles]);
 
   return (
     <>

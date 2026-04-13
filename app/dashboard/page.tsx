@@ -121,6 +121,12 @@ export default function Dashboard() {
   const [lockedVehicleId, setLockedVehicleId] = useState<string | null>(null);
   const hoveredVehicleRef = useRef<string | null>(null);
 
+  // Base camp coordinate: 9°44'53.5"N 118°46'15.9"E
+  const BASE_CAMP_COORDINATES = {
+    lat: 9.748194,
+    lng: 118.771083,
+  };
+
   const TERMINAL_STATUS_KEYWORDS = [
     "delivered",
     "completed",
@@ -273,26 +279,14 @@ export default function Dashboard() {
 
     return {
       ...vehicle,
-      lat: liveLocation?.lat ?? vehicle.lat,
-      lng: liveLocation?.lng ?? vehicle.lng,
+      // Vehicles with no active dispatch (including unserviceable) stay at base camp.
+      lat: liveLocation?.lat ?? BASE_CAMP_COORDINATES.lat,
+      lng: liveLocation?.lng ?? BASE_CAMP_COORDINATES.lng,
     };
   });
 
   const selectedVehicleData = vehiclesForMap.find((vehicle) => vehicle.id === selectedVehicle) || null;
   const activeDispatchCount = dispatches.filter((dispatch) => isActiveDispatch(dispatch.status)).length;
-
-  // Predefined coordinates to assign to vehicles from database
-  const vehicleCoordinates = [
-    { lat: 9.8236214, lng: 118.725328 },
-    { lat: 9.4705341, lng: 118.5560033 },
-    { lat: 8.7598513, lng: 117.608354 },
-    { lat: 8.361528, lng: 117.1898946 },
-    { lat: 11.1050771, lng: 119.4691487 },
-    { lat: 9.8013701, lng: 118.749166 },
-    { lat: 11.0120693, lng: 119.3283338 },
-    { lat: 10.592036, lng: 119.8769805 },
-    { lat: 10.500585, lng: 119.8473964 },
-  ];
 
   const showDispatchPreview = (vehicle: Vehicle, lockPanel: boolean) => {
     setSelectedVehicle(vehicle.id);
@@ -341,41 +335,38 @@ export default function Dashboard() {
     showDispatchPreview(hoveredVehicle, false);
   };
 
-  // Fetch vehicles from Firebase
+  // Live vehicles listener
   useEffect(() => {
-    const fetchVehicles = async () => {
-      try {
-        const q = query(collection(db, "vehicles"), orderBy("dateAdded", "asc"));
-        const snap = await getDocs(q);
-        const vehiclesData = snap.docs.map((doc, index) => {
-          const data = doc.data();
-          // Assign coordinates to vehicles based on their order
-          // If vehicle is not serviceable, use current location (9.748257, 118.771556)
-          const coords = data.status === "Serviceable" && index < vehicleCoordinates.length
-            ? vehicleCoordinates[index]
-            : { lat: 9.748257, lng: 118.771556 };
-          
+    if (!user) return;
+
+    const q = query(collection(db, "vehicles"), orderBy("dateAdded", "asc"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const vehiclesData = snap.docs.map((vehicleDoc) => {
+          const data = vehicleDoc.data();
+
           return {
-            id: doc.id,
+            id: vehicleDoc.id,
             codename: data.codename,
             status: data.status,
             truckType: data.truckType,
             plate: data.plate,
             personnelName: data.personnelName,
-            lat: coords.lat,
-            lng: coords.lng,
+            lat: BASE_CAMP_COORDINATES.lat,
+            lng: BASE_CAMP_COORDINATES.lng,
           };
         }) as Vehicle[];
-        setVehicles(vehiclesData);
-      } catch (error) {
-        console.error("Error fetching vehicles:", error);
-      }
-    };
 
-    if (user) {
-      fetchVehicles();
-    }
-  }, [user, dispatchRefresh]);
+        setVehicles(vehiclesData);
+      },
+      (error) => {
+        console.error("Error listening to vehicles:", error);
+      }
+    );
+
+    return () => unsub();
+  }, [user]);
 
   // Live dispatches listener
   useEffect(() => {
