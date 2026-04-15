@@ -413,7 +413,7 @@ export default function TICEmergencyModal({
   const displayMessages = emergencyInfoMessage ? [emergencyInfoMessage, ...messages] : messages;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-[2147483646] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
       <div className="relative w-full max-w-2xl mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden animate-scale-in">
         {/* Emergency Header */}
         <div className="bg-gradient-to-r from-rose-600 to-red-700 px-6 py-5 border-b-4 border-red-800">

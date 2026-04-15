@@ -67,6 +67,11 @@ interface Vehicle {
   lng?: number;
 }
 
+interface RoutePoint {
+  lat: number;
+  lng: number;
+}
+
 function formatTime(ts: Timestamp | null): string {
   if (!ts) return "-";
   return ts.toDate().toLocaleString("en-PH", {
@@ -119,6 +124,7 @@ export default function Dashboard() {
   const [showVehicleDispatchPanel, setShowVehicleDispatchPanel] = useState(false);
   const [vehicleHint, setVehicleHint] = useState("");
   const [lockedVehicleId, setLockedVehicleId] = useState<string | null>(null);
+  const [selectedVehicleRoutePoints, setSelectedVehicleRoutePoints] = useState<RoutePoint[]>([]);
   const hoveredVehicleRef = useRef<string | null>(null);
 
   // Base camp coordinate: 9°44'53.5"N 118°46'15.9"E
@@ -149,6 +155,58 @@ export default function Dashboard() {
     return !TERMINAL_STATUS_KEYWORDS.some((keyword) => normalizedStatus.includes(keyword));
   };
 
+  const toNumber = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Number(value.trim());
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const extractRoutePoint = (entry: any): RoutePoint | null => {
+    if (!entry || typeof entry !== "object") return null;
+
+    const sourceObjects = [
+      entry.CurrentLocation,
+      entry.currentLocation,
+      entry.location,
+      entry.startLocation,
+      entry.deliveryLocation,
+      entry.coordinates,
+      entry,
+    ];
+
+    for (const source of sourceObjects) {
+      if (!source || typeof source !== "object") continue;
+
+      const geoPointLat = toNumber(source.latitude);
+      const geoPointLng = toNumber(source.longitude);
+      if (geoPointLat !== null && geoPointLng !== null) {
+        return { lat: geoPointLat, lng: geoPointLng };
+      }
+
+      const lat = toNumber(source.lat ?? source.latitude);
+      const lng = toNumber(source.lng ?? source.lon ?? source.longitude);
+      if (lat !== null && lng !== null) {
+        return { lat, lng };
+      }
+    }
+
+    return null;
+  };
+
+  const uniqRoutePoints = (points: RoutePoint[]): RoutePoint[] => {
+    const seen = new Set<string>();
+
+    return points.filter((point) => {
+      const key = `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
   const getDispatchCurrentLocation = (dispatch: Dispatch | null): { lat: number; lng: number } | null => {
     if (!dispatch) return null;
 
@@ -172,6 +230,58 @@ export default function Dashboard() {
     if (nestedUpdatedAt instanceof Timestamp) return nestedUpdatedAt;
 
     return null;
+  };
+
+  const getDispatchRoutePoints = async (dispatch: Dispatch): Promise<RoutePoint[]> => {
+    if (!dispatch.id) return [];
+
+    try {
+      const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
+      const snap = await getDocs(query(messagesRef, orderBy("timestamp", "asc")));
+
+      const trail = snap.docs
+        .map((messageDoc) => {
+          const entry = messageDoc.data() as any;
+          if (entry?.isAdmin === true) return null;
+          return extractRoutePoint(entry);
+        })
+        .filter((point): point is RoutePoint => !!point);
+
+      const fallbackTrail = [
+        dispatch.startLocation,
+        dispatch.CurrentLocation,
+        dispatch.currentLocation,
+        dispatch.location,
+      ]
+        .map((entry) => {
+          if (!entry) return null;
+          const lat = toNumber(entry.lat);
+          const lng = toNumber(entry.lng);
+          if (lat === null || lng === null) return null;
+          return { lat, lng };
+        })
+        .filter((point): point is RoutePoint => !!point);
+
+      return uniqRoutePoints(trail.length >= 2 ? trail : [...trail, ...fallbackTrail]);
+    } catch (error) {
+      console.error("Error loading dispatch route points:", error);
+      return uniqRoutePoints(
+        [
+          dispatch.startLocation,
+          dispatch.CurrentLocation,
+          dispatch.currentLocation,
+          dispatch.location,
+        ]
+          .map((entry) => {
+            if (!entry) return null;
+            const lat = toNumber(entry.lat);
+            const lng = toNumber(entry.lng);
+            if (lat === null || lng === null) return null;
+            return { lat, lng };
+          })
+          .filter((point): point is RoutePoint => !!point)
+      );
+    }
   };
 
   const getDispatchSortTime = (dispatch: Dispatch): number => {
@@ -334,6 +444,28 @@ export default function Dashboard() {
 
     showDispatchPreview(hoveredVehicle, false);
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!lockedVehicleId || !showVehicleDispatchPanel || !selectedVehicleDispatch?.id) {
+      setSelectedVehicleRoutePoints([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSelectedVehicleRoutePoints([]);
+
+    void getDispatchRoutePoints(selectedVehicleDispatch).then((points) => {
+      if (cancelled) return;
+      setSelectedVehicleRoutePoints(points);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lockedVehicleId, selectedVehicleDispatch?.id, showVehicleDispatchPanel]);
 
   // Live vehicles listener
   useEffect(() => {
@@ -847,6 +979,7 @@ export default function Dashboard() {
                             handleVehicleClick(clickedVehicle);
                           }
                         }}
+                        routePoints={lockedVehicleId ? selectedVehicleRoutePoints : undefined}
                       />
                     )}
 
@@ -854,6 +987,13 @@ export default function Dashboard() {
                       <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Focused Vehicle</p>
                       <p className="text-xs font-bold text-slate-800">{selectedVehicleData?.codename || "Select a vehicle"}</p>
                     </div>
+
+                    {lockedVehicleId && selectedVehicleRoutePoints.length > 1 && (
+                      <div className="absolute right-3 top-3 z-10 rounded-xl border border-blue-200 bg-blue-50/95 px-3 py-2 shadow-lg backdrop-blur-sm">
+                        <p className="text-[10px] font-black uppercase tracking-wider text-blue-600">Cruise Trail</p>
+                        <p className="text-xs font-semibold text-blue-900">Highlighted route for the locked truck</p>
+                      </div>
+                    )}
 
                     {vehicleHint && (
                       <div className="absolute left-3 bottom-3 z-10 rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs font-semibold text-amber-700 shadow-lg">

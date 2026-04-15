@@ -29,6 +29,7 @@ type DispatchChatThread = {
 
 const STORAGE_KEYS = {
   activeDispatchId: "dispatch_chat_active_dispatch_id",
+  lastSeenAt: "dispatch_chat_last_seen_at",
 } as const;
 
 function sortMessages(messages: ChatMessage[] = []): ChatMessage[] {
@@ -55,6 +56,8 @@ export default function DispatchChatHub() {
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [panelPosition, setPanelPosition] = useState<{ top: number; left: number }>({ top: 72, left: 16 });
   const [isBlockedByModal, setIsBlockedByModal] = useState(false);
+  const [lastSeenAtMs, setLastSeenAtMs] = useState(0);
+  const [unreadThreadCount, setUnreadThreadCount] = useState(0);
 
   const hideOnRoutes = pathname === "/login" || pathname === "/setup-admin";
 
@@ -100,9 +103,14 @@ export default function DispatchChatHub() {
     if (!isMounted || restoredState) return;
 
     const savedActiveDispatchId = window.sessionStorage.getItem(STORAGE_KEYS.activeDispatchId);
+    const savedLastSeenAt = Number(window.sessionStorage.getItem(STORAGE_KEYS.lastSeenAt) || "0");
 
     if (savedActiveDispatchId) {
       setActiveDispatchId(savedActiveDispatchId);
+    }
+
+    if (Number.isFinite(savedLastSeenAt) && savedLastSeenAt > 0) {
+      setLastSeenAtMs(savedLastSeenAt);
     }
 
     setRestoredState(true);
@@ -117,6 +125,40 @@ export default function DispatchChatHub() {
       window.sessionStorage.removeItem(STORAGE_KEYS.activeDispatchId);
     }
   }, [activeDispatchId, isMounted, restoredState]);
+
+  useEffect(() => {
+    if (!isMounted || !restoredState) return;
+
+    if (lastSeenAtMs > 0) {
+      window.sessionStorage.setItem(STORAGE_KEYS.lastSeenAt, String(lastSeenAtMs));
+    } else {
+      window.sessionStorage.removeItem(STORAGE_KEYS.lastSeenAt);
+    }
+  }, [lastSeenAtMs, isMounted, restoredState]);
+
+  useEffect(() => {
+    if (!panelOpen) return;
+
+    setLastSeenAtMs(Date.now());
+  }, [panelOpen]);
+
+  useEffect(() => {
+    if (!threadsLoaded || !restoredState) {
+      setUnreadThreadCount(0);
+      return;
+    }
+
+    const unreadCount = threads.reduce((count, thread) => {
+      const hasUnreadFromPersonnel = sortMessages(thread.dispatchChat ?? []).some((message) => {
+        const messageMs = message.timestamp?.toMillis?.() ?? 0;
+        return message.isAdmin !== true && messageMs > lastSeenAtMs;
+      });
+
+      return count + (hasUnreadFromPersonnel ? 1 : 0);
+    }, 0);
+
+    setUnreadThreadCount(unreadCount);
+  }, [threads, threadsLoaded, restoredState, lastSeenAtMs]);
 
   useEffect(() => {
     if (isBlockedByModal) {
@@ -327,10 +369,15 @@ export default function DispatchChatHub() {
             setPanelOpen((prev) => !prev);
           }}
           disabled={isBlockedByModal}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="relative inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 pr-6 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>chat</span>
           Dispatch Chat
+          {unreadThreadCount > 0 && (
+            <span className="absolute -right-2 -top-2 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-red-600 px-1 text-[10px] font-black text-white shadow-md">
+              {unreadThreadCount > 99 ? "99+" : unreadThreadCount}
+            </span>
+          )}
         </button>
       </div>
       {overlays}

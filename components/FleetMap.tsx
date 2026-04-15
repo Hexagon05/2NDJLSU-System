@@ -12,24 +12,32 @@ type FleetVehicle = {
   lng?: number;
 };
 
+type RoutePoint = {
+  lat: number;
+  lng: number;
+};
+
 interface FleetMapProps {
   vehicles: FleetVehicle[];
   selectedVehicleId?: string | null;
   onVehicleHover?: (vehicleId: string | null) => void;
   onVehicleSelect?: (vehicleId: string) => void;
+  routePoints?: RoutePoint[];
 }
 
 const DEFAULT_CENTER: [number, number] = [9.748257, 118.771556];
 const DEFAULT_ZOOM = 9;
 const SELECTED_VEHICLE_ZOOM = 14;
 
-export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, onVehicleSelect }: FleetMapProps) {
+export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, onVehicleSelect, routePoints }: FleetMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
+  const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const hasAutoFittedRef = useRef(false);
   const lastFocusedVehicleIdRef = useRef<string | null>(null);
+  const routeSignatureRef = useRef<string>("");
 
   const visibleVehicles = useMemo(
     () => vehicles.filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng)),
@@ -49,14 +57,72 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
     }).addTo(mapRef.current);
 
     layerRef.current = L.layerGroup().addTo(mapRef.current);
+    routeLayerRef.current = L.layerGroup().addTo(mapRef.current);
 
     return () => {
       mapRef.current?.remove();
       mapRef.current = null;
       layerRef.current = null;
+      routeLayerRef.current = null;
       markersRef.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!mapRef.current || !routeLayerRef.current) return;
+
+    const route = (routePoints || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+    const routeSignature = route.map((point) => `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`).join("|");
+
+    if (routeSignatureRef.current === routeSignature) return;
+    routeSignatureRef.current = routeSignature;
+
+    routeLayerRef.current.clearLayers();
+
+    if (route.length < 2) return;
+
+    const routeLatLngs = route.map((point) => [point.lat, point.lng] as [number, number]);
+    const routeShadow = L.polyline(routeLatLngs, {
+      color: "#1d4ed8",
+      weight: 10,
+      opacity: 0.16,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(routeLayerRef.current);
+
+    L.polyline(routeLatLngs, {
+      color: "#2563eb",
+      weight: 5,
+      opacity: 0.92,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(routeLayerRef.current);
+
+    L.circleMarker(routeLatLngs[0], {
+      radius: 6,
+      color: "#ffffff",
+      weight: 2,
+      fillColor: "#10b981",
+      fillOpacity: 1,
+    }).bindTooltip("Route start", { permanent: false }).addTo(routeLayerRef.current);
+
+    L.circleMarker(routeLatLngs[routeLatLngs.length - 1], {
+      radius: 7,
+      color: "#ffffff",
+      weight: 2,
+      fillColor: "#2563eb",
+      fillOpacity: 1,
+    }).bindTooltip("Latest truck position", { permanent: false }).addTo(routeLayerRef.current);
+
+    const routeBounds = L.latLngBounds(routeLatLngs);
+    mapRef.current.fitBounds(routeBounds, {
+      padding: [50, 50],
+      maxZoom: 15,
+      animate: true,
+    });
+
+    routeShadow.bringToBack();
+  }, [routePoints]);
 
   useEffect(() => {
     if (!mapRef.current || !layerRef.current) return;
