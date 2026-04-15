@@ -910,6 +910,23 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const emergencyEvents = sortedTrackingEvents.filter((event) => event.reportKind === "Emergency");
     const confirmDeliveryEvents = sortedTrackingEvents.filter((event) => event.reportKind === "Confirm Delivery");
 
+    const getReportSummary = (events: DispatchTrackingPoint[]) => {
+        const latest = events[events.length - 1] || null;
+        return {
+            total: events.length,
+            coordinates: latest
+                ? `${latest.location.lat.toFixed(6)}, ${latest.location.lng.toFixed(6)}`
+                : "-",
+            timestamp: latest ? formatTime(latest.timestamp) : "-",
+            reason: latest?.reportText?.trim() ? latest.reportText.trim() : "-",
+        };
+    };
+
+    const delaySummary = getReportSummary(delayEvents);
+    const stopOverSummary = getReportSummary(stopOverEvents);
+    const emergencySummary = getReportSummary(emergencyEvents);
+    const confirmDeliverySummary = getReportSummary(confirmDeliveryEvents);
+
     const latestDelayEvent = delayEvents[delayEvents.length - 1] || null;
     const latestDelayAtMs = toMillis(latestDelayEvent?.timestamp || null);
     const hasUnreadDelayNotifier = latestDelayAtMs > delaySeenAtMs;
@@ -1000,11 +1017,11 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         label: "Base Camp",
     };
     const dispatchUpdatedAt =
-        personnelReportLocation?.timestamp
+        sourceDispatch.updatedAt
         || sourceDispatch.UpdatedAt
-        || sourceDispatch.updatedAt
         || sourceDispatch.CurrentLocation?.updatedAt
         || sourceDispatch.currentLocation?.updatedAt
+        || personnelReportLocation?.timestamp
         || null;
     const requisitionId = sourceDispatch.requisitionNumber || sourceDispatch.requisitionId || sourceDispatch.poNumber || "N/A";
 
@@ -1399,9 +1416,9 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             </div>
                         )}
 
-                        <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-5">
-                            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                <div className="h-[320px]">
+                        <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-5 items-stretch">
+                            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden min-h-[420px] h-full self-stretch">
+                                <div className="h-full min-h-[420px]">
                                     {loadingTrackingOverview ? (
                                         <div className="h-full w-full bg-slate-100 animate-pulse flex items-center justify-center text-xs font-semibold text-slate-500">
                                             Loading truck movement map...
@@ -1418,7 +1435,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                 </div>
                             </div>
 
-                            <div className="space-y-3">
+                            <div className="space-y-3 h-full">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
                                     <button
                                         type="button"
@@ -1434,10 +1451,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                             <span className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full bg-red-500 ring-2 ring-white" />
                                         )}
                                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-700">Delay Reports</p>
-                                        <p className="text-xl font-black text-amber-900">{delayEvents.length}</p>
-                                        <p className="text-[11px] text-amber-800/80">
-                                            {delayEvents[delayEvents.length - 1]?.location?.lat?.toFixed(6) ?? "-"}, {delayEvents[delayEvents.length - 1]?.location?.lng?.toFixed(6) ?? "-"}
-                                        </p>
+                                        <p className="text-xl font-black text-amber-900">{delaySummary.total}</p>
+                                        <p className="text-[11px] text-amber-800/80">Coordinates: {delaySummary.coordinates}</p>
+                                        <p className="text-[11px] text-amber-800/80">Time: {delaySummary.timestamp}</p>
+                                        <p className="text-[11px] text-amber-800/80 truncate">Reason: {delaySummary.reason}</p>
                                     </button>
                                     <button
                                         type="button"
@@ -1445,10 +1462,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         className={`rounded-2xl border p-3 text-left transition ${selectedReportCategory === "stop-over" ? "border-sky-400 bg-sky-100/80 shadow-sm" : "border-sky-200 bg-sky-50/70 hover:border-sky-300"}`}
                                     >
                                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-sky-700">Stop Over Reports</p>
-                                        <p className="text-xl font-black text-sky-900">{stopOverEvents.length}</p>
-                                        <p className="text-[11px] text-sky-800/80">
-                                            {stopOverEvents[stopOverEvents.length - 1]?.location?.lat?.toFixed(6) ?? "-"}, {stopOverEvents[stopOverEvents.length - 1]?.location?.lng?.toFixed(6) ?? "-"}
-                                        </p>
+                                        <p className="text-xl font-black text-sky-900">{stopOverSummary.total}</p>
+                                        <p className="text-[11px] text-sky-800/80">Coordinates: {stopOverSummary.coordinates}</p>
+                                        <p className="text-[11px] text-sky-800/80">Time: {stopOverSummary.timestamp}</p>
+                                        <p className="text-[11px] text-sky-800/80 truncate">Reason: {stopOverSummary.reason}</p>
                                     </button>
                                     <button
                                         type="button"
@@ -1456,10 +1473,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         className={`rounded-2xl border p-3 text-left transition ${selectedReportCategory === "emergency" ? "border-rose-400 bg-rose-100/80 shadow-sm" : "border-rose-200 bg-rose-50/70 hover:border-rose-300"}`}
                                     >
                                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-700">Emergency Reports</p>
-                                        <p className="text-xl font-black text-rose-900">{emergencyEvents.length}</p>
-                                        <p className="text-[11px] text-rose-800/80">
-                                            {emergencyEvents[emergencyEvents.length - 1]?.location?.lat?.toFixed(6) ?? "-"}, {emergencyEvents[emergencyEvents.length - 1]?.location?.lng?.toFixed(6) ?? "-"}
-                                        </p>
+                                        <p className="text-xl font-black text-rose-900">{emergencySummary.total}</p>
+                                        <p className="text-[11px] text-rose-800/80">Coordinates: {emergencySummary.coordinates}</p>
+                                        <p className="text-[11px] text-rose-800/80">Time: {emergencySummary.timestamp}</p>
+                                        <p className="text-[11px] text-rose-800/80 truncate">Reason: {emergencySummary.reason}</p>
                                     </button>
                                     <button
                                         type="button"
@@ -1467,10 +1484,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         className={`rounded-2xl border p-3 text-left transition ${selectedReportCategory === "confirm-delivery" ? "border-emerald-400 bg-emerald-100/80 shadow-sm" : "border-emerald-200 bg-emerald-50/70 hover:border-emerald-300"}`}
                                     >
                                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Confirm Delivery</p>
-                                        <p className="text-xl font-black text-emerald-900">{confirmDeliveryEvents.length}</p>
-                                        <p className="text-[11px] text-emerald-800/80">
-                                            {confirmDeliveryEvents[confirmDeliveryEvents.length - 1]?.location?.lat?.toFixed(6) ?? "-"}, {confirmDeliveryEvents[confirmDeliveryEvents.length - 1]?.location?.lng?.toFixed(6) ?? "-"}
-                                        </p>
+                                        <p className="text-xl font-black text-emerald-900">{confirmDeliverySummary.total}</p>
+                                        <p className="text-[11px] text-emerald-800/80">Coordinates: {confirmDeliverySummary.coordinates}</p>
+                                        <p className="text-[11px] text-emerald-800/80">Time: {confirmDeliverySummary.timestamp}</p>
+                                        <p className="text-[11px] text-emerald-800/80 truncate">Reason: {confirmDeliverySummary.reason}</p>
                                     </button>
                                 </div>
 

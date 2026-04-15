@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import DispatchModal from "@/components/DispatchModal";
@@ -72,6 +72,15 @@ interface RoutePoint {
   lng: number;
 }
 
+interface ActiveRoutePlan {
+  id: string;
+  currentLocation: RoutePoint;
+  destinationLocation: RoutePoint;
+  baseCampLocation?: RoutePoint;
+}
+
+type MapViewMode = "truck" | "destination" | "show-all";
+
 function formatTime(ts: Timestamp | null): string {
   if (!ts) return "-";
   return ts.toDate().toLocaleString("en-PH", {
@@ -123,9 +132,8 @@ export default function Dashboard() {
   const [selectedVehicleDispatch, setSelectedVehicleDispatch] = useState<Dispatch | null>(null);
   const [showVehicleDispatchPanel, setShowVehicleDispatchPanel] = useState(false);
   const [vehicleHint, setVehicleHint] = useState("");
-  const [lockedVehicleId, setLockedVehicleId] = useState<string | null>(null);
   const [selectedVehicleRoutePoints, setSelectedVehicleRoutePoints] = useState<RoutePoint[]>([]);
-  const hoveredVehicleRef = useRef<string | null>(null);
+  const [mapViewMode, setMapViewMode] = useState<MapViewMode>("truck");
 
   // Base camp coordinate: 9°44'53.5"N 118°46'15.9"E
   const BASE_CAMP_COORDINATES = {
@@ -218,18 +226,6 @@ export default function Dashboard() {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
     return { lat, lng };
-  };
-
-  const getDispatchUpdatedAt = (dispatch: Dispatch | null): Timestamp | null => {
-    if (!dispatch) return null;
-
-    if (dispatch.UpdatedAt instanceof Timestamp) return dispatch.UpdatedAt;
-    if (dispatch.updatedAt instanceof Timestamp) return dispatch.updatedAt;
-
-    const nestedUpdatedAt = dispatch.CurrentLocation?.updatedAt || dispatch.currentLocation?.updatedAt;
-    if (nestedUpdatedAt instanceof Timestamp) return nestedUpdatedAt;
-
-    return null;
   };
 
   const getDispatchRoutePoints = async (dispatch: Dispatch): Promise<RoutePoint[]> => {
@@ -397,8 +393,53 @@ export default function Dashboard() {
 
   const selectedVehicleData = vehiclesForMap.find((vehicle) => vehicle.id === selectedVehicle) || null;
   const activeDispatchCount = dispatches.filter((dispatch) => isActiveDispatch(dispatch.status)).length;
+  const selectedCurrentLocation = getDispatchCurrentLocation(selectedVehicleDispatch);
+  const selectedDestinationLocation = (() => {
+    const point = selectedVehicleDispatch?.deliveryLocation || selectedVehicleDispatch?.location;
+    if (!point) return null;
 
-  const showDispatchPreview = (vehicle: Vehicle, lockPanel: boolean) => {
+    const lat = toNumber(point.lat);
+    const lng = toNumber(point.lng);
+    if (lat === null || lng === null) return null;
+
+    return { lat, lng };
+  })();
+  const allActiveRoutePlans: ActiveRoutePlan[] = vehiclesForMap
+    .map((vehicle) => {
+      const activeDispatch = findActiveDispatchForVehicle(vehicle);
+      if (!activeDispatch || !isActiveDispatch(activeDispatch.status)) return null;
+
+      const currentLocation = getDispatchCurrentLocation(activeDispatch)
+        || (Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng)
+          ? { lat: vehicle.lat as number, lng: vehicle.lng as number }
+          : null);
+      if (!currentLocation) return null;
+
+      const destinationSource = activeDispatch.deliveryLocation || activeDispatch.location;
+      const destinationLat = toNumber(destinationSource?.lat);
+      const destinationLng = toNumber(destinationSource?.lng);
+      if (destinationLat === null || destinationLng === null) return null;
+
+      const startSource = activeDispatch.startLocation;
+      const startLat = toNumber(startSource?.lat) ?? BASE_CAMP_COORDINATES.lat;
+      const startLng = toNumber(startSource?.lng) ?? BASE_CAMP_COORDINATES.lng;
+
+      return {
+        id: activeDispatch.id || vehicle.id,
+        currentLocation,
+        destinationLocation: {
+          lat: destinationLat,
+          lng: destinationLng,
+        },
+        baseCampLocation: {
+          lat: startLat,
+          lng: startLng,
+        },
+      } as ActiveRoutePlan;
+    })
+    .filter((route): route is ActiveRoutePlan => !!route);
+
+  const showDispatchPreview = (vehicle: Vehicle) => {
     setSelectedVehicle(vehicle.id);
 
     const activeDispatch = findActiveDispatchForVehicle(vehicle);
@@ -406,49 +447,22 @@ export default function Dashboard() {
       setSelectedVehicleDispatch(activeDispatch);
       setShowVehicleDispatchPanel(true);
       setVehicleHint("");
-      if (lockPanel) {
-        setLockedVehicleId(vehicle.id);
-      }
     } else {
       setSelectedVehicleDispatch(null);
       setShowVehicleDispatchPanel(false);
-      if (lockPanel) {
-        setLockedVehicleId(null);
-        setVehicleHint(`${vehicle.codename} has no active dispatch at the moment.`);
-      } else {
-        setVehicleHint("");
-      }
+      setVehicleHint(`${vehicle.codename} has no active dispatch at the moment.`);
     }
   };
 
   const handleVehicleClick = (vehicle: Vehicle) => {
-    showDispatchPreview(vehicle, true);
-  };
-
-  const handleVehicleHover = (vehicleId: string | null) => {
-    if (hoveredVehicleRef.current === vehicleId) return;
-    hoveredVehicleRef.current = vehicleId;
-
-    if (lockedVehicleId) return;
-
-    if (!vehicleId) {
-      setSelectedVehicle(null);
-      setShowVehicleDispatchPanel(false);
-      setSelectedVehicleDispatch(null);
-      setVehicleHint("");
-      return;
-    }
-
-    const hoveredVehicle = vehicles.find((vehicle) => vehicle.id === vehicleId);
-    if (!hoveredVehicle) return;
-
-    showDispatchPreview(hoveredVehicle, false);
+    setMapViewMode("truck");
+    showDispatchPreview(vehicle);
   };
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!lockedVehicleId || !showVehicleDispatchPanel || !selectedVehicleDispatch?.id) {
+    if (!selectedVehicle || !showVehicleDispatchPanel || !selectedVehicleDispatch?.id) {
       setSelectedVehicleRoutePoints([]);
       return () => {
         cancelled = true;
@@ -465,7 +479,16 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [lockedVehicleId, selectedVehicleDispatch?.id, showVehicleDispatchPanel]);
+  }, [selectedVehicle, selectedVehicleDispatch?.id, showVehicleDispatchPanel, dispatches]);
+
+  useEffect(() => {
+    if (!selectedVehicleDispatch?.id) return;
+
+    const latestSelectedVehicleDispatch = dispatches.find((dispatch) => dispatch.id === selectedVehicleDispatch.id);
+    if (latestSelectedVehicleDispatch) {
+      setSelectedVehicleDispatch(latestSelectedVehicleDispatch);
+    }
+  }, [dispatches, selectedVehicleDispatch?.id]);
 
   // Live vehicles listener
   useEffect(() => {
@@ -877,6 +900,24 @@ export default function Dashboard() {
                     <span className="material-symbols-outlined" style={{ fontSize: "0.9rem" }}>refresh</span>
                     Refresh
                   </button>
+                  <button
+                    onClick={() => {
+                      setMapViewMode("show-all");
+                      setShowVehicleDispatchPanel(false);
+                      setSelectedVehicle(null);
+                      setSelectedVehicleDispatch(null);
+                      setSelectedVehicleRoutePoints([]);
+                      setVehicleHint("");
+                    }}
+                    disabled={allActiveRoutePlans.length === 0}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase border ${mapViewMode === "show-all"
+                      ? "bg-emerald-600 border-emerald-600 text-white"
+                      : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
+                      } ${allActiveRoutePlans.length === 0 ? "cursor-not-allowed opacity-60" : ""}`}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "0.9rem" }}>route</span>
+                    Show All Routes
+                  </button>
                 </div>
               </div>
 
@@ -972,37 +1013,79 @@ export default function Dashboard() {
                       <FleetMap
                         vehicles={vehiclesForMap}
                         selectedVehicleId={selectedVehicle}
-                        onVehicleHover={handleVehicleHover}
-                        onVehicleSelect={(vehicleId) => {
-                          const clickedVehicle = vehicles.find((vehicle) => vehicle.id === vehicleId);
-                          if (clickedVehicle) {
-                            handleVehicleClick(clickedVehicle);
-                          }
-                        }}
-                        routePoints={lockedVehicleId ? selectedVehicleRoutePoints : undefined}
+                        routePoints={selectedVehicleRoutePoints}
+                        mapViewMode={mapViewMode}
+                        baseCampLocation={BASE_CAMP_COORDINATES}
+                        currentLocation={selectedCurrentLocation}
+                        destinationLocation={selectedDestinationLocation}
+                        allActiveRoutes={allActiveRoutePlans}
                       />
                     )}
 
-                    <div className="absolute left-3 top-3 z-10 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-lg backdrop-blur-sm">
-                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Focused Vehicle</p>
-                      <p className="text-xs font-bold text-slate-800">{selectedVehicleData?.codename || "Select a vehicle"}</p>
-                    </div>
+                    {!selectedDispatch && (
+                      <>
+                        <div className="absolute left-3 top-3 z-10 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-lg backdrop-blur-sm">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Focused Vehicle</p>
+                          <p className="text-xs font-bold text-slate-800">{selectedVehicleData?.codename || "Select a vehicle"}</p>
+                        </div>
 
-                    {lockedVehicleId && selectedVehicleRoutePoints.length > 1 && (
+                        <div className="absolute left-3 top-[76px] z-10 flex flex-col gap-2">
+                          <button
+                            onClick={() => setMapViewMode("truck")}
+                            disabled={!selectedVehicle}
+                            className={`rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-wide shadow-lg backdrop-blur-sm transition-colors ${mapViewMode === "truck"
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                              : "border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50"
+                              } ${!selectedVehicle ? "cursor-not-allowed opacity-60" : ""}`}
+                          >
+                            Truck: Zoom Current Location
+                          </button>
+                          <button
+                            onClick={() => setMapViewMode("destination")}
+                            disabled={!selectedVehicleDispatch}
+                            className={`rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-wide shadow-lg backdrop-blur-sm transition-colors ${mapViewMode === "destination"
+                              ? "border-blue-300 bg-blue-50 text-blue-800"
+                              : "border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50"
+                              } ${!selectedVehicleDispatch ? "cursor-not-allowed opacity-60" : ""}`}
+                          >
+                            Destination: Show Current, Destination, Base Camp
+                          </button>
+                          <button
+                            onClick={() => {
+                              setMapViewMode("show-all");
+                              setShowVehicleDispatchPanel(false);
+                              setSelectedVehicle(null);
+                              setSelectedVehicleDispatch(null);
+                              setSelectedVehicleRoutePoints([]);
+                              setVehicleHint("");
+                            }}
+                            disabled={allActiveRoutePlans.length === 0}
+                            className={`rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-wide shadow-lg backdrop-blur-sm transition-colors ${mapViewMode === "show-all"
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                              : "border-slate-200 bg-white/90 text-slate-700 hover:bg-slate-50"
+                              } ${allActiveRoutePlans.length === 0 ? "cursor-not-allowed opacity-60" : ""}`}
+                          >
+                            Show All: Active Routes
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    {!selectedDispatch && selectedVehicle && selectedVehicleRoutePoints.length > 1 && (
                       <div className="absolute right-3 top-3 z-10 rounded-xl border border-blue-200 bg-blue-50/95 px-3 py-2 shadow-lg backdrop-blur-sm">
                         <p className="text-[10px] font-black uppercase tracking-wider text-blue-600">Cruise Trail</p>
-                        <p className="text-xs font-semibold text-blue-900">Highlighted route for the locked truck</p>
+                        <p className="text-xs font-semibold text-blue-900">Highlighted route for the selected truck</p>
                       </div>
                     )}
 
-                    {vehicleHint && (
+                    {!selectedDispatch && vehicleHint && (
                       <div className="absolute left-3 bottom-3 z-10 rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs font-semibold text-amber-700 shadow-lg">
                         {vehicleHint}
                       </div>
                     )}
 
-                    {showVehicleDispatchPanel && selectedVehicleDispatch && (
-                      <div className="absolute top-3 right-3 z-[1200] w-[350px] max-w-[92%] rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-md shadow-2xl overflow-hidden">
+                    {!selectedDispatch && showVehicleDispatchPanel && selectedVehicleDispatch && (
+                      <div className="absolute top-3 right-3 z-[1200] w-[290px] max-w-[82%] rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-md shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between px-4 py-3 bg-slate-900 text-white">
                           <div>
                             <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Active Dispatch</p>
@@ -1011,8 +1094,10 @@ export default function Dashboard() {
                           <button
                             onClick={() => {
                               setShowVehicleDispatchPanel(false);
-                              setLockedVehicleId(null);
-                              hoveredVehicleRef.current = null;
+                              setSelectedVehicle(null);
+                              setSelectedVehicleDispatch(null);
+                              setSelectedVehicleRoutePoints([]);
+                              setVehicleHint("");
                             }}
                             className="rounded p-1.5 hover:bg-white/15"
                           >
@@ -1021,50 +1106,21 @@ export default function Dashboard() {
                         </div>
 
                         <div className="p-4 space-y-3 text-sm">
-                          {(() => {
-                            const liveLocation = getDispatchCurrentLocation(selectedVehicleDispatch);
-                            const lastUpdatedAt = getDispatchUpdatedAt(selectedVehicleDispatch);
-
-                            return (
-                              <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-500 font-semibold">Status</span>
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUS_STYLES[selectedVehicleDispatch.status] ?? "bg-slate-100 text-slate-600"}`}>
-                              {selectedVehicleDispatch.status}
-                            </span>
-                          </div>
                           <div className="flex items-start justify-between gap-3">
-                            <span className="text-slate-500 font-semibold">Officer</span>
-                            <span className="text-slate-800 font-bold text-right">{selectedVehicleDispatch.officer || "N/A"}</span>
+                            <span className="text-slate-500 font-semibold">Truck</span>
+                            <span className="text-slate-800 font-bold text-right">{selectedVehicleDispatch.truck || "N/A"}</span>
                           </div>
                           <div className="flex items-start justify-between gap-3">
                             <span className="text-slate-500 font-semibold">Personnel</span>
                             <span className="text-slate-800 font-bold text-right">{selectedVehicleDispatch.personnels || "N/A"}</span>
                           </div>
-                          <div className="flex items-start justify-between gap-3">
-                            <span className="text-slate-500 font-semibold">Destination</span>
-                            <span className="text-slate-800 font-semibold text-right">
-                              {selectedVehicleDispatch.deliveryLocation?.label || selectedVehicleDispatch.location?.label || "Location unavailable"}
-                            </span>
-                          </div>
-                          <div className="flex items-start justify-between gap-3">
-                            <span className="text-slate-500 font-semibold">Coordinates</span>
-                            <span className="text-slate-700 font-mono text-xs text-right">
-                              {(liveLocation?.lat ?? selectedVehicleDispatch.deliveryLocation?.lat ?? selectedVehicleDispatch.location?.lat ?? 0).toFixed(6)}, {(liveLocation?.lng ?? selectedVehicleDispatch.deliveryLocation?.lng ?? selectedVehicleDispatch.location?.lng ?? 0).toFixed(6)}
-                            </span>
-                          </div>
-                          <div className="flex items-start justify-between gap-3">
-                            <span className="text-slate-500 font-semibold">Last Location Update</span>
-                            <span className="text-slate-700 text-xs font-semibold text-right">
-                              {formatTime(lastUpdatedAt)}
-                            </span>
-                          </div>
 
                           <button
                             onClick={() => {
                               setShowVehicleDispatchPanel(false);
-                              setLockedVehicleId(null);
-                              hoveredVehicleRef.current = null;
+                              setSelectedVehicle(null);
+                              setSelectedVehicleDispatch(null);
+                              setSelectedVehicleRoutePoints([]);
                               setSelectedDispatch(selectedVehicleDispatch);
                             }}
                             className="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:from-blue-700 hover:to-indigo-700 transition-colors"
@@ -1072,9 +1128,6 @@ export default function Dashboard() {
                             <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>open_in_new</span>
                             Open Full Dispatch Details
                           </button>
-                              </>
-                            );
-                          })()}
                         </div>
                       </div>
                     )}

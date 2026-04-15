@@ -59,6 +59,137 @@ const isDeliveredStatus = (status: unknown): boolean => {
     );
 };
 
+const normalizeTruckToken = (value: unknown): string =>
+    normalizeLookupValue(value).replace(/[^a-z0-9]+/g, "");
+
+const normalizePersonnelToken = (value: unknown): string =>
+    normalizeLookupValue(value).replace(/[^a-z0-9]+/g, "");
+
+const isTerminalDispatchStatus = (status: unknown): boolean => {
+    const normalized = normalizeLookupValue(status).replace(/[_-]+/g, " ");
+    return (
+        normalized.includes("completed")
+        || normalized.includes("successful dispatch")
+        || normalized.includes("sucessful dispatch")
+        || normalized.includes("success dispatch")
+        || normalized.includes("cancelled")
+        || normalized.includes("canceled")
+    );
+};
+
+const isVehicleInActiveDispatch = (
+    vehicle: { codename: string; plate: string },
+    activeDispatchTruckRefs: string[]
+): boolean => {
+    const codenameRaw = normalizeLookupValue(vehicle.codename);
+    const plateRaw = normalizeLookupValue(vehicle.plate);
+    const codenameToken = normalizeTruckToken(vehicle.codename);
+    const plateToken = normalizeTruckToken(vehicle.plate);
+
+    return activeDispatchTruckRefs.some((activeRef) => {
+        const activeRefRaw = normalizeLookupValue(activeRef);
+        const activeRefToken = normalizeTruckToken(activeRef);
+
+        if (!activeRefRaw) return false;
+
+        if (codenameRaw && (activeRefRaw === codenameRaw || activeRefRaw.includes(codenameRaw))) {
+            return true;
+        }
+
+        if (plateRaw && (activeRefRaw === plateRaw || activeRefRaw.includes(plateRaw))) {
+            return true;
+        }
+
+        if (codenameToken && (activeRefToken === codenameToken || activeRefToken.includes(codenameToken))) {
+            return true;
+        }
+
+        if (plateToken && (activeRefToken === plateToken || activeRefToken.includes(plateToken))) {
+            return true;
+        }
+
+        return false;
+    });
+};
+
+const isPersonnelInActiveDispatch = (
+    personnelName: string,
+    activeDispatchPersonnelRefs: string[]
+): boolean => {
+    const personnelRaw = normalizeLookupValue(personnelName);
+    const personnelToken = normalizePersonnelToken(personnelName);
+
+    return activeDispatchPersonnelRefs.some((activeRef) => {
+        const activeRaw = normalizeLookupValue(activeRef);
+        const activeToken = normalizePersonnelToken(activeRef);
+
+        if (!activeRaw) return false;
+
+        return (
+            activeRaw === personnelRaw
+            || activeRaw.includes(personnelRaw)
+            || personnelRaw.includes(activeRaw)
+            || activeToken === personnelToken
+            || activeToken.includes(personnelToken)
+            || personnelToken.includes(activeToken)
+        );
+    });
+};
+
+const collectDispatchRefs = (dispatchData: any): string[] => {
+    const values: string[] = [];
+
+    const pushValue = (value: unknown) => {
+        if (value === null || value === undefined) return;
+
+        if (Array.isArray(value)) {
+            value.forEach(pushValue);
+            return;
+        }
+
+        String(value)
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .forEach((entry) => values.push(entry));
+    };
+
+    pushValue(dispatchData?.requisitionNumber);
+    pushValue(dispatchData?.requisitionId);
+    pushValue(dispatchData?.requisitionNo);
+    pushValue(dispatchData?.requestNumber);
+    pushValue(dispatchData?.poNumber);
+    pushValue(dispatchData?.po);
+
+    return Array.from(new Set(values));
+};
+
+const collectDispatchPersonnelRefs = (dispatchData: any): string[] => {
+    const values: string[] = [];
+
+    const pushValue = (value: unknown) => {
+        if (value === null || value === undefined) return;
+
+        if (Array.isArray(value)) {
+            value.forEach(pushValue);
+            return;
+        }
+
+        String(value)
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .forEach((entry) => values.push(entry));
+    };
+
+    pushValue(dispatchData?.personnels);
+    pushValue(dispatchData?.officer);
+    pushValue(dispatchData?.personnelIncluded);
+    pushValue(dispatchData?.personnelIncludedList);
+
+    return Array.from(new Set(values));
+};
+
 interface Props {
     onClose: () => void;
     onSuccess: () => void;
@@ -107,6 +238,9 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
 
     // DB Data
     const [dbVehicles, setDbVehicles] = useState<{ id: string; codename: string; plate: string; status: string }[]>([]);
+    const [activeDispatchTruckRefs, setActiveDispatchTruckRefs] = useState<string[]>([]);
+    const [activeDispatchRequisitionRefs, setActiveDispatchRequisitionRefs] = useState<string[]>([]);
+    const [activeDispatchPersonnelRefs, setActiveDispatchPersonnelRefs] = useState<string[]>([]);
     const [dbPersonnels, setDbPersonnels] = useState<{ id: string; name: string }[]>([]);
     const [approvedRequisitions, setApprovedRequisitions] = useState<RequisitionOption[]>([]);
     const [loadingRequisitions, setLoadingRequisitions] = useState(false);
@@ -130,6 +264,46 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
         .flat();
 
     const personnelIncluded = Array.from(new Set(personnelIncludedNames)).join(", ");
+
+    const updateCoordinateField = (target: "start" | "delivery", field: "lat" | "lng", value: string) => {
+        const normalizedValue = value.replace(/[^0-9.\-]/g, "");
+
+        if (target === "start") {
+            if (field === "lat") {
+                setStartLat(normalizedValue);
+            } else {
+                setStartLng(normalizedValue);
+            }
+            setPinTarget("start");
+            return;
+        }
+
+        if (field === "lat") {
+            setDeliveryLat(normalizedValue);
+        } else {
+            setDeliveryLng(normalizedValue);
+        }
+        setPinTarget("delivery");
+    };
+
+    useEffect(() => {
+        if (!dbPersonnels.length) return;
+
+        const availablePersonnel = dbPersonnels.filter(
+            (personnel) => !isPersonnelInActiveDispatch(personnel.name, activeDispatchPersonnelRefs)
+        );
+
+        if (availablePersonnel.length === 0) {
+            if (personnels) {
+                setPersonnels("");
+            }
+            return;
+        }
+
+        if (!personnels || isPersonnelInActiveDispatch(personnels, activeDispatchPersonnelRefs)) {
+            setPersonnels(availablePersonnel[0].name);
+        }
+    }, [dbPersonnels, activeDispatchPersonnelRefs, personnels]);
 
     // Toggle individual checklist item
     const toggleBlowbagetsItem = (item: keyof typeof blowbagetsChecklist) => {
@@ -232,25 +406,43 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
         try {
             // Exclude requisitions/POs already completed by delivered/successful dispatches.
             const deliveredDispatchRefs = new Set<string>();
+            const activeDispatchRequisitionRefs = new Set<string>();
+            const activeDispatchPersonnelRefs = new Set<string>();
             const dispatchesSnap = await getDocs(collection(db, "dispatches"));
             dispatchesSnap.forEach((dispatchDoc) => {
                 const data = dispatchDoc.data() as any;
-                if (!isDeliveredStatus(data.status)) return;
+                const requisitionRefs = collectDispatchRefs(data);
+                const personnelRefs = collectDispatchPersonnelRefs(data);
 
-                [
-                    data.requisitionNumber,
-                    data.requisitionId,
-                    data.requisitionNo,
-                    data.requestNumber,
-                    data.poNumber,
-                    data.po,
-                ].forEach((ref) => {
-                    const normalizedRef = normalizeLookupValue(ref);
-                    if (normalizedRef) {
-                        deliveredDispatchRefs.add(normalizedRef);
-                    }
-                });
+                if (isDeliveredStatus(data.status)) {
+                    requisitionRefs.forEach((ref) => {
+                        const normalizedRef = normalizeLookupValue(ref);
+                        if (normalizedRef) {
+                            deliveredDispatchRefs.add(normalizedRef);
+                        }
+                    });
+                    return;
+                }
+
+                if (!isTerminalDispatchStatus(data.status)) {
+                    requisitionRefs.forEach((ref) => {
+                        const normalizedRef = normalizeLookupValue(ref);
+                        if (normalizedRef) {
+                            activeDispatchRequisitionRefs.add(normalizedRef);
+                        }
+                    });
+
+                    personnelRefs.forEach((ref) => {
+                        const normalizedRef = normalizeLookupValue(ref);
+                        if (normalizedRef) {
+                            activeDispatchPersonnelRefs.add(normalizedRef);
+                        }
+                    });
+                }
             });
+
+            setActiveDispatchRequisitionRefs(Array.from(activeDispatchRequisitionRefs));
+            setActiveDispatchPersonnelRefs(Array.from(activeDispatchPersonnelRefs));
 
             const requisitionSnap = await getDocs(collection(db, "requisitions"));
 
@@ -398,7 +590,11 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
             }
 
             try {
-                const vSnap = await getDocs(query(collection(db, "vehicles"), orderBy("codename", "asc")));
+                const [vSnap, dispatchesSnap] = await Promise.all([
+                    getDocs(query(collection(db, "vehicles"), orderBy("codename", "asc"))),
+                    getDocs(collection(db, "dispatches")),
+                ]);
+
                 const vData = vSnap.docs.map(d => ({
                     id: d.id,
                     codename: d.data().codename,
@@ -406,13 +602,25 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     status: String(d.data().status || ""),
                 }));
 
+                const activeTrucks = dispatchesSnap.docs
+                    .map((dispatchDoc) => dispatchDoc.data() as any)
+                    .filter((dispatchData) => !isTerminalDispatchStatus(dispatchData?.status))
+                    .map((dispatchData) => String(dispatchData?.truck || "").trim())
+                    .filter(Boolean);
+
+                setActiveDispatchTruckRefs(activeTrucks);
+
                 const serviceableVehicles = vData.filter(
                     (vehicle) => vehicle.status.toLowerCase() === "serviceable"
                 );
 
+                const availableVehicles = serviceableVehicles.filter(
+                    (vehicle) => !isVehicleInActiveDispatch(vehicle, activeTrucks)
+                );
+
                 setDbVehicles(serviceableVehicles);
-                if (serviceableVehicles.length > 0) {
-                    setTruck(serviceableVehicles[0].codename);
+                if (availableVehicles.length > 0) {
+                    setTruck(availableVehicles[0].codename);
                 } else {
                     setTruck("");
                 }
@@ -422,13 +630,25 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
 
             try {
                 const oSnap = await getDocs(query(collection(db, "personnelAccount"), orderBy("lastName", "asc")));
-                setDbPersonnels(oSnap.docs.map(d => {
+                const personnelList = oSnap.docs.map(d => {
                     const data = d.data();
                     return {
                         id: d.id,
                         name: `[${data.rank}] ${data.lastName}, ${data.firstName}`,
                     };
-                }));
+                });
+
+                setDbPersonnels(personnelList);
+
+                const availablePersonnel = personnelList.filter(
+                    (personnel) => !isPersonnelInActiveDispatch(personnel.name, Array.from(activeDispatchPersonnelRefs))
+                );
+
+                if (availablePersonnel.length > 0) {
+                    setPersonnels(availablePersonnel[0].name);
+                } else {
+                    setPersonnels("");
+                }
             } catch (err) {
                 console.error("Error loading personnels:", err);
             }
@@ -909,6 +1129,23 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
     const handleSubmit = async () => {
         if (!personnels.trim()) { setError("Personnel assignment is required."); return; }
         if (!truck) { setError("Truck selection is required."); return; }
+
+        const selectedTruckVehicle = dbVehicles.find((vehicle) => vehicle.codename === truck);
+        if (selectedTruckVehicle && isVehicleInActiveDispatch(selectedTruckVehicle, activeDispatchTruckRefs)) {
+            setError("Selected truck is already assigned to an active dispatch. Please choose another truck.");
+            return;
+        }
+
+        if (isPersonnelInActiveDispatch(personnels, activeDispatchPersonnelRefs)) {
+            setError("Selected personnel is already assigned to an active dispatch. Please choose another personnel.");
+            return;
+        }
+
+        if (activeDispatchRequisitionRefs.includes(normalizeLookupValue(requisitionNumber))) {
+            setError("Selected requisition is already tied to an active dispatch. Please choose another requisition.");
+            return;
+        }
+
         if (!hasBlowbagets) { setError("All BLOWBAGETS checklist items must be checked before submitting."); return; }
         setError("");
         setSubmitting(true);
@@ -1081,6 +1318,50 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                                 Set Delivery Pin Point
                                             </button>
                                         </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                            <div className="space-y-2">
+                                                <p className="text-[10px] font-black uppercase tracking-wider text-blue-700">Start Coordinates</p>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={startLat}
+                                                        onChange={(e) => updateCoordinateField("start", "lat", e.target.value)}
+                                                        className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold font-mono focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none"
+                                                        placeholder="Latitude"
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={startLng}
+                                                        onChange={(e) => updateCoordinateField("start", "lng", e.target.value)}
+                                                        className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold font-mono focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none"
+                                                        placeholder="Longitude"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Delivery Coordinates</p>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={deliveryLat}
+                                                        onChange={(e) => updateCoordinateField("delivery", "lat", e.target.value)}
+                                                        className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold font-mono focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 focus:outline-none"
+                                                        placeholder="Latitude"
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={deliveryLng}
+                                                        onChange={(e) => updateCoordinateField("delivery", "lng", e.target.value)}
+                                                        className="w-full rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-xs font-semibold font-mono focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 focus:outline-none"
+                                                        placeholder="Longitude"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
                                         <div className="rounded-2xl overflow-hidden border-4 border-white shadow-2xl aspect-square relative group">
                                             <LeafletMap
                                                 lat={parseFloat(pinTarget === "start" ? startLat : deliveryLat)}
@@ -1157,7 +1438,14 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                                     className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none transition-all shadow-sm hover:shadow-md appearance-none cursor-pointer"
                                                 >
                                                     <option value="">Select Truck</option>
-                                                    {dbVehicles.map(v => <option key={v.id} value={v.codename}>{v.codename} ({v.plate})</option>)}
+                                                    {dbVehicles.map((v) => {
+                                                        const isBusy = isVehicleInActiveDispatch(v, activeDispatchTruckRefs);
+                                                        return (
+                                                            <option key={v.id} value={v.codename} disabled={isBusy}>
+                                                                {v.codename} ({v.plate}){isBusy ? " - Active Dispatch" : ""}
+                                                            </option>
+                                                        );
+                                                    })}
                                                 </select>
                                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-slate-400 pointer-events-none">expand_more</span>
                                             </div>
@@ -1174,7 +1462,14 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                                     className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none transition-all shadow-sm hover:shadow-md appearance-none cursor-pointer"
                                                 >
                                                     <option value="">Select Personnel</option>
-                                                    {dbPersonnels.map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
+                                                    {dbPersonnels.map((o) => {
+                                                        const isBusy = isPersonnelInActiveDispatch(o.name, activeDispatchPersonnelRefs);
+                                                        return (
+                                                            <option key={o.id} value={o.name} disabled={isBusy}>
+                                                                {o.name}{isBusy ? " - Active Dispatch" : ""}
+                                                            </option>
+                                                        );
+                                                    })}
                                                 </select>
                                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-slate-400 pointer-events-none">expand_more</span>
                                             </div>
@@ -1194,9 +1489,14 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                                                 className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none transition-all shadow-sm hover:shadow-md appearance-none cursor-pointer"
                                                             >
                                                                 <option value="">Select from system list</option>
-                                                                {dbPersonnels.map((o) => (
-                                                                    <option key={`${o.id}-included-${index}`} value={o.name}>{o.name}</option>
-                                                                ))}
+                                                                {dbPersonnels.map((o) => {
+                                                                    const isBusy = isPersonnelInActiveDispatch(o.name, activeDispatchPersonnelRefs);
+                                                                    return (
+                                                                        <option key={`${o.id}-included-${index}`} value={o.name} disabled={isBusy}>
+                                                                            {o.name}{isBusy ? " - Active Dispatch" : ""}
+                                                                        </option>
+                                                                    );
+                                                                })}
                                                             </select>
                                                             <span className="absolute right-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-slate-400 pointer-events-none">expand_more</span>
                                                         </div>
@@ -1476,19 +1776,29 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">
                                                 {approvedRequisitions.map((req) => {
                                                     const isSelected = requisitionNumber === req.requisitionNumber;
+                                                    const isBusy = activeDispatchRequisitionRefs.includes(normalizeLookupValue(req.requisitionNumber));
                                                     return (
                                                         <button
                                                             key={req.id}
                                                             type="button"
-                                                            onClick={() => handleRequisitionChange(req)}
-                                                            className={`text-left p-3 rounded-xl border-2 transition-all ${isSelected
-                                                                ? "border-emerald-500 bg-emerald-50 shadow-md"
-                                                                : "border-slate-200 bg-white hover:border-amber-300 hover:shadow-sm"
+                                                            onClick={() => {
+                                                                if (!isBusy) {
+                                                                    handleRequisitionChange(req);
+                                                                }
+                                                            }}
+                                                            disabled={isBusy}
+                                                            className={`text-left p-3 rounded-xl border-2 transition-all ${isBusy
+                                                                ? "border-slate-200 bg-slate-100 opacity-60 cursor-not-allowed"
+                                                                : isSelected
+                                                                    ? "border-emerald-500 bg-emerald-50 shadow-md"
+                                                                    : "border-slate-200 bg-white hover:border-amber-300 hover:shadow-sm"
                                                                 }`}
                                                         >
                                                             <div className="flex items-center justify-between gap-2">
                                                                 <p className="text-sm font-bold text-slate-800 truncate">{req.requisitionNumber}</p>
-                                                                {isSelected && (
+                                                                {isBusy ? (
+                                                                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[9px] font-black uppercase text-slate-600">Active Dispatch</span>
+                                                                ) : isSelected && (
                                                                     <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: "1rem" }}>check_circle</span>
                                                                 )}
                                                             </div>
@@ -1801,6 +2111,11 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                                 if (step === "form") {
                                     if (!personnels.trim()) { setError("Personnel assignment is required."); return; }
                                     if (!truck) { setError("Truck selection is required."); return; }
+                                    const selectedTruckVehicle = dbVehicles.find((vehicle) => vehicle.codename === truck);
+                                    if (selectedTruckVehicle && isVehicleInActiveDispatch(selectedTruckVehicle, activeDispatchTruckRefs)) {
+                                        setError("Selected truck is already assigned to an active dispatch. Please choose another truck.");
+                                        return;
+                                    }
                                     if (!requisitionNumber.trim()) { setError("Please select a released requisition before proceeding to summary review."); return; }
                                     if (!hasBlowbagets) { setError("All BLOWBAGETS checklist items must be checked before proceeding to summary review."); return; }
                                     setError("");

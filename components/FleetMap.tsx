@@ -17,27 +17,90 @@ type RoutePoint = {
   lng: number;
 };
 
+type ActiveRoutePlan = {
+  id: string;
+  currentLocation: RoutePoint;
+  destinationLocation: RoutePoint;
+  baseCampLocation?: RoutePoint;
+};
+
+type MapViewMode = "truck" | "destination" | "show-all";
+
 interface FleetMapProps {
   vehicles: FleetVehicle[];
   selectedVehicleId?: string | null;
-  onVehicleHover?: (vehicleId: string | null) => void;
-  onVehicleSelect?: (vehicleId: string) => void;
   routePoints?: RoutePoint[];
+  mapViewMode?: MapViewMode;
+  baseCampLocation?: RoutePoint;
+  currentLocation?: RoutePoint | null;
+  destinationLocation?: RoutePoint | null;
+  allActiveRoutes?: ActiveRoutePlan[];
 }
 
 const DEFAULT_CENTER: [number, number] = [9.748257, 118.771556];
 const DEFAULT_ZOOM = 9;
-const SELECTED_VEHICLE_ZOOM = 14;
+const TRUCK_FOCUS_ZOOM = 16;
 
-export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, onVehicleSelect, routePoints }: FleetMapProps) {
+function isValidPoint(point?: RoutePoint | null): point is RoutePoint {
+  return !!point && Number.isFinite(point.lat) && Number.isFinite(point.lng);
+}
+
+function uniqWaypoints(points: Array<RoutePoint | null | undefined>): RoutePoint[] {
+  const seen = new Set<string>();
+
+  return points.filter((point): point is RoutePoint => {
+    if (!isValidPoint(point)) return false;
+
+    const key = `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
+    if (seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function toRouteKey(point: RoutePoint): string {
+  // Keep route signatures stable against minor GPS drift.
+  return `${point.lat.toFixed(4)},${point.lng.toFixed(4)}`;
+}
+
+function createDestinationIcon(): L.DivIcon {
+  return L.divIcon({
+    className: "fleet-destination-marker-wrapper",
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    html: `
+      <div class="fleet-destination-marker" title="Destination">
+        <span class="material-symbols-outlined">place</span>
+      </div>
+    `,
+  });
+}
+
+export default function FleetMap({
+  vehicles,
+  selectedVehicleId,
+  routePoints,
+  mapViewMode = "truck",
+  baseCampLocation,
+  currentLocation,
+  destinationLocation,
+  allActiveRoutes = [],
+}: FleetMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
-  const routeLayerRef = useRef<L.LayerGroup | null>(null);
+  const trailLayerRef = useRef<L.LayerGroup | null>(null);
+  const planningLayerRef = useRef<L.LayerGroup | null>(null);
+  const allRoutesLayerRef = useRef<L.LayerGroup | null>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const hasAutoFittedRef = useRef(false);
   const lastFocusedVehicleIdRef = useRef<string | null>(null);
-  const routeSignatureRef = useRef<string>("");
+  const trailSignatureRef = useRef<string>("");
+  const planningSignatureRef = useRef<string>("");
+  const allRoutesSignatureRef = useRef<string>("");
+  const routingRequestRef = useRef(0);
+  const allRoutesRequestRef = useRef(0);
 
   const visibleVehicles = useMemo(
     () => vehicles.filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng)),
@@ -57,72 +120,327 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
     }).addTo(mapRef.current);
 
     layerRef.current = L.layerGroup().addTo(mapRef.current);
-    routeLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    trailLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    planningLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    allRoutesLayerRef.current = L.layerGroup().addTo(mapRef.current);
 
     return () => {
       mapRef.current?.remove();
       mapRef.current = null;
       layerRef.current = null;
-      routeLayerRef.current = null;
+      trailLayerRef.current = null;
+      planningLayerRef.current = null;
+      allRoutesLayerRef.current = null;
       markersRef.current.clear();
     };
   }, []);
 
   useEffect(() => {
-    if (!mapRef.current || !routeLayerRef.current) return;
+    const map = mapRef.current;
+    const allRoutesLayer = allRoutesLayerRef.current;
+
+    if (!map || !allRoutesLayer) return;
+
+    const allRoutesSignature = mapViewMode === "show-all"
+      ? allActiveRoutes
+          .map((routePlan) => {
+            const current = toRouteKey(routePlan.currentLocation);
+            const destination = toRouteKey(routePlan.destinationLocation);
+            return `${routePlan.id}:${current}->${destination}`;
+          })
+          .sort()
+          .join("|")
+      : `mode:${mapViewMode}`;
+
+    if (allRoutesSignatureRef.current === allRoutesSignature) {
+      return;
+    }
+    allRoutesSignatureRef.current = allRoutesSignature;
+
+    allRoutesLayer.clearLayers();
+
+    if (mapViewMode !== "show-all") return;
+
+    if (allActiveRoutes.length === 0) {
+      if (visibleVehicles.length > 0) {
+        const bounds = L.latLngBounds(
+          visibleVehicles.map((vehicle) => [vehicle.lat as number, vehicle.lng as number] as [number, number])
+        );
+
+        map.fitBounds(bounds, {
+          padding: [60, 60],
+          maxZoom: 11,
+          animate: true,
+        });
+      }
+      return;
+    }
+
+    allRoutesRequestRef.current += 1;
+    const activeSignature = allRoutesSignature;
+    const boundsPoints: [number, number][] = [];
+
+    allActiveRoutes.forEach((routePlan, index) => {
+      const waypoints = uniqWaypoints([
+        routePlan.currentLocation,
+        routePlan.destinationLocation,
+      ]);
+
+      if (waypoints.length < 2) return;
+
+      waypoints.forEach((point) => {
+        boundsPoints.push([point.lat, point.lng]);
+      });
+
+      L.circleMarker([routePlan.currentLocation.lat, routePlan.currentLocation.lng], {
+        radius: 6,
+        color: "#ffffff",
+        weight: 2,
+        fillColor: "#16a34a",
+        fillOpacity: 0.95,
+      })
+        .bindTooltip(`Active Dispatch ${index + 1}: Current`, { permanent: false })
+        .addTo(allRoutesLayer);
+
+      L.circleMarker([routePlan.destinationLocation.lat, routePlan.destinationLocation.lng], {
+        radius: 7,
+        color: "#ffffff",
+        weight: 2,
+        fillColor: "#2563eb",
+        fillOpacity: 0.95,
+      })
+        .bindTooltip(`Active Dispatch ${index + 1}: Destination`, { permanent: false })
+        .addTo(allRoutesLayer);
+
+      const coords = waypoints.map((point) => `${point.lng},${point.lat}`).join(";");
+      const routeUrl = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=false&steps=false`;
+
+      void fetch(routeUrl)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Routing request failed with ${response.status}`);
+          }
+
+          const payload = await response.json();
+          const geometry = payload?.routes?.[0]?.geometry?.coordinates;
+          if (!Array.isArray(geometry) || geometry.length < 2) {
+            throw new Error("No street route geometry returned");
+          }
+
+          if (allRoutesSignatureRef.current !== activeSignature) return;
+
+          const routeLatLngs = geometry
+            .map((point: unknown) => {
+              if (!Array.isArray(point) || point.length < 2) return null;
+
+              const lng = Number(point[0]);
+              const lat = Number(point[1]);
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+              return [lat, lng] as [number, number];
+            })
+            .filter((point: [number, number] | null): point is [number, number] => !!point);
+
+          if (routeLatLngs.length < 2) return;
+
+          L.polyline(routeLatLngs, {
+            color: "#14532d",
+            weight: 8,
+            opacity: 0.16,
+            lineCap: "round",
+            lineJoin: "round",
+          }).addTo(allRoutesLayer);
+
+          L.polyline(routeLatLngs, {
+            color: "#16a34a",
+            weight: 4,
+            opacity: 0.95,
+            lineCap: "round",
+            lineJoin: "round",
+          }).addTo(allRoutesLayer);
+        })
+        .catch(() => {
+          // Do not draw straight-line fallback routes.
+        });
+    });
+
+    if (boundsPoints.length > 0) {
+      map.fitBounds(L.latLngBounds(boundsPoints), {
+        padding: [70, 70],
+        maxZoom: 12,
+        animate: true,
+      });
+    }
+  }, [mapViewMode, allActiveRoutes, visibleVehicles]);
+
+  useEffect(() => {
+    if (!trailLayerRef.current) return;
 
     const route = (routePoints || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
     const routeSignature = route.map((point) => `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`).join("|");
 
-    if (routeSignatureRef.current === routeSignature) return;
-    routeSignatureRef.current = routeSignature;
+    if (trailSignatureRef.current === routeSignature) return;
+    trailSignatureRef.current = routeSignature;
 
-    routeLayerRef.current.clearLayers();
+    // Historical trail is intentionally hidden on dashboard map;
+    // only the green suggested street routing line is shown.
+    trailLayerRef.current.clearLayers();
+  }, [routePoints]);
 
-    if (route.length < 2) return;
+  useEffect(() => {
+    const map = mapRef.current;
+    const planningLayer = planningLayerRef.current;
 
-    const routeLatLngs = route.map((point) => [point.lat, point.lng] as [number, number]);
-    const routeShadow = L.polyline(routeLatLngs, {
-      color: "#1d4ed8",
-      weight: 10,
-      opacity: 0.16,
-      lineCap: "round",
-      lineJoin: "round",
-    }).addTo(routeLayerRef.current);
+    if (!map || !planningLayer) return;
 
-    L.polyline(routeLatLngs, {
-      color: "#2563eb",
-      weight: 5,
-      opacity: 0.92,
-      lineCap: "round",
-      lineJoin: "round",
-    }).addTo(routeLayerRef.current);
+    planningLayer.clearLayers();
 
-    L.circleMarker(routeLatLngs[0], {
-      radius: 6,
-      color: "#ffffff",
-      weight: 2,
-      fillColor: "#10b981",
-      fillOpacity: 1,
-    }).bindTooltip("Route start", { permanent: false }).addTo(routeLayerRef.current);
+    if (mapViewMode === "show-all") {
+      planningSignatureRef.current = "";
+      return;
+    }
 
-    L.circleMarker(routeLatLngs[routeLatLngs.length - 1], {
-      radius: 7,
-      color: "#ffffff",
-      weight: 2,
-      fillColor: "#2563eb",
-      fillOpacity: 1,
-    }).bindTooltip("Latest truck position", { permanent: false }).addTo(routeLayerRef.current);
+    if (!selectedVehicleId) {
+      planningSignatureRef.current = "";
+      lastFocusedVehicleIdRef.current = null;
+      return;
+    }
 
-    const routeBounds = L.latLngBounds(routeLatLngs);
-    mapRef.current.fitBounds(routeBounds, {
-      padding: [50, 50],
-      maxZoom: 15,
-      animate: true,
+    const selectedVehicle = visibleVehicles.find((vehicle) => vehicle.id === selectedVehicleId);
+    if (!selectedVehicle) return;
+
+    const liveTruckPoint: RoutePoint = isValidPoint(currentLocation)
+      ? currentLocation
+      : { lat: selectedVehicle.lat as number, lng: selectedVehicle.lng as number };
+
+    const navWaypoints = mapViewMode === "destination"
+      ? uniqWaypoints([baseCampLocation, liveTruckPoint, destinationLocation])
+      : uniqWaypoints([liveTruckPoint, destinationLocation]);
+
+    const signature = `${mapViewMode}|${selectedVehicleId}|${navWaypoints.map((point) => toRouteKey(point)).join(";")}`;
+    const signatureChanged = planningSignatureRef.current !== signature;
+    planningSignatureRef.current = signature;
+
+    const pointMarkers: Array<{ point: RoutePoint; label: string; color: string }> = [
+      { point: liveTruckPoint, label: "Current Location", color: "#16a34a" },
+    ];
+
+    if (isValidPoint(destinationLocation)) {
+      pointMarkers.push({ point: destinationLocation, label: "Destination", color: "#2563eb" });
+    }
+
+    if (mapViewMode === "destination" && isValidPoint(baseCampLocation)) {
+      pointMarkers.push({ point: baseCampLocation, label: "Base Camp", color: "#7c3aed" });
+    }
+
+    pointMarkers.forEach(({ point, label, color }) => {
+      if (label === "Destination") {
+        L.marker([point.lat, point.lng], {
+          icon: createDestinationIcon(),
+        })
+          .bindTooltip(label, { permanent: false })
+          .addTo(planningLayer);
+        return;
+      }
+
+      L.circleMarker([point.lat, point.lng], {
+        radius: label === "Current Location" ? 8 : 6,
+        color: "#ffffff",
+        weight: 2,
+        fillColor: color,
+        fillOpacity: 0.95,
+      })
+        .bindTooltip(label, { permanent: false })
+        .addTo(planningLayer);
     });
 
-    routeShadow.bringToBack();
-  }, [routePoints]);
+    if (mapViewMode === "truck") {
+      const existingZoom = map.getZoom();
+      const targetZoom = Math.max(existingZoom, TRUCK_FOCUS_ZOOM);
+
+      map.flyTo([liveTruckPoint.lat, liveTruckPoint.lng], targetZoom, {
+        animate: true,
+        duration: lastFocusedVehicleIdRef.current === selectedVehicleId ? 0.5 : 0.9,
+      });
+    } else {
+      const boundsPoints = uniqWaypoints([baseCampLocation, liveTruckPoint, destinationLocation]);
+      if (boundsPoints.length >= 2 && signatureChanged) {
+        map.fitBounds(
+          L.latLngBounds(boundsPoints.map((point) => [point.lat, point.lng] as [number, number])),
+          {
+            padding: [60, 60],
+            maxZoom: 15,
+            animate: true,
+          }
+        );
+      }
+    }
+
+    lastFocusedVehicleIdRef.current = selectedVehicleId;
+
+    if (navWaypoints.length < 2) return;
+
+    const requestId = ++routingRequestRef.current;
+    const coords = navWaypoints.map((point) => `${point.lng},${point.lat}`).join(";");
+    const routeUrl = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=false&steps=false`;
+
+    void fetch(routeUrl)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Routing request failed with ${response.status}`);
+        }
+
+        const payload = await response.json();
+        const geometry = payload?.routes?.[0]?.geometry?.coordinates;
+        if (!Array.isArray(geometry) || geometry.length < 2) {
+          throw new Error("No street route geometry returned");
+        }
+
+        if (routingRequestRef.current !== requestId) return;
+
+        const routeLatLngs = geometry
+          .map((point: unknown) => {
+            if (!Array.isArray(point) || point.length < 2) return null;
+
+            const lng = Number(point[0]);
+            const lat = Number(point[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+            return [lat, lng] as [number, number];
+          })
+          .filter((point: [number, number] | null): point is [number, number] => !!point);
+
+        if (routeLatLngs.length < 2) return;
+
+        L.polyline(routeLatLngs, {
+          color: "#14532d",
+          weight: 10,
+          opacity: 0.18,
+          lineCap: "round",
+          lineJoin: "round",
+        }).addTo(planningLayer);
+
+        L.polyline(routeLatLngs, {
+          color: "#16a34a",
+          weight: 5,
+          opacity: 0.98,
+          lineCap: "round",
+          lineJoin: "round",
+        }).addTo(planningLayer);
+
+        if (mapViewMode === "destination" && signatureChanged) {
+          map.fitBounds(L.latLngBounds(routeLatLngs), {
+            padding: [60, 60],
+            maxZoom: 15,
+            animate: true,
+          });
+        }
+      })
+      .catch(() => {
+        if (routingRequestRef.current !== requestId) return;
+        // Do not draw straight-line fallback routes.
+      });
+  }, [selectedVehicleId, visibleVehicles, mapViewMode, baseCampLocation, currentLocation, destinationLocation]);
 
   useEffect(() => {
     if (!mapRef.current || !layerRef.current) return;
@@ -163,11 +481,6 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
       }
 
       const marker = L.marker([vehicle.lat as number, vehicle.lng as number], { icon }).addTo(layerRef.current as L.LayerGroup);
-      marker.on("mouseover", () => onVehicleHover?.(vehicle.id));
-      marker.on("mousemove", () => onVehicleHover?.(vehicle.id));
-      marker.on("mouseout", () => onVehicleHover?.(null));
-      marker.on("click", () => onVehicleSelect?.(vehicle.id));
-      marker.on("touchstart", () => onVehicleSelect?.(vehicle.id));
       markerByVehicleId.set(vehicle.id, marker);
     });
 
@@ -175,7 +488,7 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
       mapRef.current.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
       hasAutoFittedRef.current = false;
     }
-  }, [visibleVehicles, selectedVehicleId, onVehicleHover, onVehicleSelect]);
+  }, [visibleVehicles, selectedVehicleId]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -200,32 +513,6 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
     });
     hasAutoFittedRef.current = true;
   }, [visibleVehicles]);
-
-  useEffect(() => {
-    if (!mapRef.current || !selectedVehicleId) {
-      lastFocusedVehicleIdRef.current = null;
-      return;
-    }
-
-    const selectedVehicle = visibleVehicles.find((vehicle) => vehicle.id === selectedVehicleId);
-    if (!selectedVehicle || !Number.isFinite(selectedVehicle.lat) || !Number.isFinite(selectedVehicle.lng)) return;
-
-    const currentZoom = mapRef.current.getZoom();
-    const targetZoom = Math.max(currentZoom, SELECTED_VEHICLE_ZOOM);
-
-    // Prevent repeated flyTo when the same selected vehicle does not change.
-    if (lastFocusedVehicleIdRef.current === selectedVehicleId) {
-      mapRef.current.panTo([selectedVehicle.lat as number, selectedVehicle.lng as number], { animate: true });
-      return;
-    }
-
-    mapRef.current.flyTo([selectedVehicle.lat as number, selectedVehicle.lng as number], targetZoom, {
-      animate: true,
-      duration: 0.8,
-    });
-
-    lastFocusedVehicleIdRef.current = selectedVehicleId;
-  }, [selectedVehicleId, visibleVehicles]);
 
   return (
     <>
@@ -288,6 +575,30 @@ export default function FleetMap({ vehicles, selectedVehicleId, onVehicleHover, 
         .fleet-marker.selected .fleet-truck {
           transform: scale(1.08);
           box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.28), 0 8px 18px rgba(30, 64, 175, 0.35);
+        }
+
+        .fleet-destination-marker-wrapper {
+          background: transparent;
+          border: 0;
+        }
+
+        .fleet-destination-marker {
+          height: 30px;
+          width: 30px;
+          border-radius: 999px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          border: 2px solid rgba(255, 255, 255, 0.95);
+          box-shadow: 0 6px 14px rgba(30, 64, 175, 0.35);
+        }
+
+        .fleet-destination-marker .material-symbols-outlined {
+          font-size: 18px;
+          color: #ffffff;
+          font-variation-settings: "FILL" 1, "wght" 700, "GRAD" 0, "opsz" 20;
+          line-height: 1;
         }
       `}</style>
     </>

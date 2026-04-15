@@ -29,7 +29,7 @@ type DispatchChatThread = {
 
 const STORAGE_KEYS = {
   activeDispatchId: "dispatch_chat_active_dispatch_id",
-  lastSeenAt: "dispatch_chat_last_seen_at",
+  threadSeenAtById: "dispatch_chat_thread_seen_at_by_id",
 } as const;
 
 function sortMessages(messages: ChatMessage[] = []): ChatMessage[] {
@@ -38,6 +38,23 @@ function sortMessages(messages: ChatMessage[] = []): ChatMessage[] {
     const bMs = b.timestamp?.toMillis?.() ?? 0;
     return aMs - bMs;
   });
+}
+
+function getUnreadPersonnelMessageCount(thread: DispatchChatThread, lastSeenAtMs: number): number {
+  return sortMessages(thread.dispatchChat ?? []).reduce((count, message) => {
+    const messageMs = message.timestamp?.toMillis?.() ?? 0;
+    if (message.isAdmin === true || messageMs <= lastSeenAtMs) {
+      return count;
+    }
+    return count + 1;
+  }, 0);
+}
+
+function getLatestPersonnelMessageMs(messages: ChatMessage[] = []): number {
+  return sortMessages(messages).reduce((latest, message) => {
+    if (message.isAdmin === true) return latest;
+    return Math.max(latest, message.timestamp?.toMillis?.() ?? 0);
+  }, 0);
 }
 
 export default function DispatchChatHub() {
@@ -56,7 +73,7 @@ export default function DispatchChatHub() {
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [panelPosition, setPanelPosition] = useState<{ top: number; left: number }>({ top: 72, left: 16 });
   const [isBlockedByModal, setIsBlockedByModal] = useState(false);
-  const [lastSeenAtMs, setLastSeenAtMs] = useState(0);
+  const [threadSeenAtById, setThreadSeenAtById] = useState<Record<string, number>>({});
   const [unreadThreadCount, setUnreadThreadCount] = useState(0);
 
   const hideOnRoutes = pathname === "/login" || pathname === "/setup-admin";
@@ -103,14 +120,27 @@ export default function DispatchChatHub() {
     if (!isMounted || restoredState) return;
 
     const savedActiveDispatchId = window.sessionStorage.getItem(STORAGE_KEYS.activeDispatchId);
-    const savedLastSeenAt = Number(window.sessionStorage.getItem(STORAGE_KEYS.lastSeenAt) || "0");
+    const savedThreadSeenAtRaw = window.sessionStorage.getItem(STORAGE_KEYS.threadSeenAtById);
 
     if (savedActiveDispatchId) {
       setActiveDispatchId(savedActiveDispatchId);
     }
 
-    if (Number.isFinite(savedLastSeenAt) && savedLastSeenAt > 0) {
-      setLastSeenAtMs(savedLastSeenAt);
+    if (savedThreadSeenAtRaw) {
+      try {
+        const parsed = JSON.parse(savedThreadSeenAtRaw) as Record<string, unknown>;
+        const normalized = Object.entries(parsed || {}).reduce<Record<string, number>>((acc, [dispatchId, value]) => {
+          const ms = Number(value);
+          if (dispatchId && Number.isFinite(ms) && ms > 0) {
+            acc[dispatchId] = ms;
+          }
+          return acc;
+        }, {});
+
+        setThreadSeenAtById(normalized);
+      } catch {
+        setThreadSeenAtById({});
+      }
     }
 
     setRestoredState(true);
@@ -129,18 +159,29 @@ export default function DispatchChatHub() {
   useEffect(() => {
     if (!isMounted || !restoredState) return;
 
-    if (lastSeenAtMs > 0) {
-      window.sessionStorage.setItem(STORAGE_KEYS.lastSeenAt, String(lastSeenAtMs));
+    if (Object.keys(threadSeenAtById).length > 0) {
+      window.sessionStorage.setItem(STORAGE_KEYS.threadSeenAtById, JSON.stringify(threadSeenAtById));
     } else {
-      window.sessionStorage.removeItem(STORAGE_KEYS.lastSeenAt);
+      window.sessionStorage.removeItem(STORAGE_KEYS.threadSeenAtById);
     }
-  }, [lastSeenAtMs, isMounted, restoredState]);
+  }, [threadSeenAtById, isMounted, restoredState]);
 
-  useEffect(() => {
-    if (!panelOpen) return;
+  const markThreadAsSeen = (threadId: string, messages: ChatMessage[] = []) => {
+    const latestPersonnelMessageMs = getLatestPersonnelMessageMs(messages);
+    if (latestPersonnelMessageMs <= 0) return;
 
-    setLastSeenAtMs(Date.now());
-  }, [panelOpen]);
+    setThreadSeenAtById((prev) => {
+      const currentSeenAt = prev[threadId] ?? 0;
+      if (latestPersonnelMessageMs <= currentSeenAt) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [threadId]: latestPersonnelMessageMs,
+      };
+    });
+  };
 
   useEffect(() => {
     if (!threadsLoaded || !restoredState) {
@@ -149,16 +190,14 @@ export default function DispatchChatHub() {
     }
 
     const unreadCount = threads.reduce((count, thread) => {
-      const hasUnreadFromPersonnel = sortMessages(thread.dispatchChat ?? []).some((message) => {
-        const messageMs = message.timestamp?.toMillis?.() ?? 0;
-        return message.isAdmin !== true && messageMs > lastSeenAtMs;
-      });
+      const seenAtForThread = threadSeenAtById[thread.id] ?? 0;
+      const hasUnreadFromPersonnel = getUnreadPersonnelMessageCount(thread, seenAtForThread) > 0;
 
       return count + (hasUnreadFromPersonnel ? 1 : 0);
     }, 0);
 
     setUnreadThreadCount(unreadCount);
-  }, [threads, threadsLoaded, restoredState, lastSeenAtMs]);
+  }, [threads, threadsLoaded, restoredState, threadSeenAtById]);
 
   useEffect(() => {
     if (isBlockedByModal) {
@@ -175,11 +214,16 @@ export default function DispatchChatHub() {
       if (!incomingDispatchId) return;
       setPanelOpen(true);
       setActiveDispatchId(incomingDispatchId);
+
+      const thread = threads.find((entry) => entry.id === incomingDispatchId);
+      if (thread) {
+        markThreadAsSeen(thread.id, thread.dispatchChat ?? []);
+      }
     };
 
     window.addEventListener("open-dispatch-chat", handleOpenChat as EventListener);
     return () => window.removeEventListener("open-dispatch-chat", handleOpenChat as EventListener);
-  }, []);
+  }, [threads]);
 
   useEffect(() => {
     if (!activeDispatchId) return;
@@ -229,6 +273,11 @@ export default function DispatchChatHub() {
   );
 
   const activeMessages = useMemo(() => sortMessages(activeThread?.dispatchChat ?? []), [activeThread]);
+
+  useEffect(() => {
+    if (!activeThread?.id) return;
+    markThreadAsSeen(activeThread.id, activeThread.dispatchChat ?? []);
+  }, [activeThread?.id, activeThread?.dispatchChat]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -286,17 +335,31 @@ export default function DispatchChatHub() {
                   threads.map((thread) => {
                     const lastMessage = sortMessages(thread.dispatchChat ?? []).slice(-1)[0];
                     const isActive = thread.id === activeDispatchId;
+                    const unreadCount = getUnreadPersonnelMessageCount(thread, threadSeenAtById[thread.id] ?? 0);
+                    const hasUnread = unreadCount > 0;
                     return (
                       <button
                         key={thread.id}
-                        onClick={() => setActiveDispatchId(thread.id)}
-                        className={`w-full border-b border-slate-100 px-4 py-3 text-left transition-colors ${isActive ? "bg-blue-50" : "hover:bg-slate-50"}`}
+                        onClick={() => {
+                          setActiveDispatchId(thread.id);
+                          markThreadAsSeen(thread.id, thread.dispatchChat ?? []);
+                        }}
+                        className={`w-full border-b border-slate-100 px-4 py-3 text-left transition-colors ${isActive ? "bg-blue-50" : hasUnread ? "bg-emerald-50/50 hover:bg-emerald-50" : "hover:bg-slate-50"}`}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-bold text-slate-800">{thread.personnels || "Personnel"}</p>
-                          <span className="text-[10px] text-slate-500 font-mono">{thread.dispatchId || thread.id.slice(0, 8)}</span>
+                          <p className={`text-sm font-bold ${hasUnread ? "text-emerald-800" : "text-slate-800"}`}>{thread.personnels || "Personnel"}</p>
+                          <div className="flex items-center gap-2">
+                            {hasUnread && (
+                              <span className="inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-black text-white shadow-sm">
+                                {unreadCount > 99 ? "99+" : unreadCount}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-500 font-mono">{thread.dispatchId || thread.id.slice(0, 8)}</span>
+                          </div>
                         </div>
-                        <p className="mt-1 text-xs text-slate-600 truncate">{lastMessage?.text || "No messages yet"}</p>
+                        <p className={`mt-1 text-xs truncate ${hasUnread ? "text-emerald-700 font-semibold" : "text-slate-600"}`}>
+                          {lastMessage?.text || "No messages yet"}
+                        </p>
                       </button>
                     );
                   })

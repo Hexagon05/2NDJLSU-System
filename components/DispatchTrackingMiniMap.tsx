@@ -41,6 +41,45 @@ function toMillis(ts: { toMillis?: () => number } | null): number {
     return ts?.toMillis?.() ?? 0;
 }
 
+function toFiniteNumber(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+        const parsed = Number(value.trim());
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function normalizePoint(point?: Coordinates): Coordinates | null {
+    if (!point) return null;
+
+    const lat = toFiniteNumber((point as { lat?: unknown }).lat);
+    const lng = toFiniteNumber((point as { lng?: unknown }).lng);
+    if (lat === null || lng === null) return null;
+
+    return {
+        ...point,
+        lat,
+        lng,
+    };
+}
+
+function uniqWaypoints(points: Array<Coordinates | undefined>): Coordinates[] {
+    const seen = new Set<string>();
+
+    return points
+        .map((point) => normalizePoint(point))
+        .filter((point): point is Coordinates => {
+            if (!point) return false;
+
+            const key = `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
+            if (seen.has(key)) return false;
+
+            seen.add(key);
+            return true;
+        });
+}
+
 function buildPin(color: string, label: string): L.DivIcon {
     return L.divIcon({
         className: "dispatch-tracking-marker",
@@ -74,8 +113,11 @@ export default function DispatchTrackingMiniMap({
 }: DispatchTrackingMiniMapProps) {
     const mapRef = useRef<L.Map | null>(null);
     const layerRef = useRef<L.LayerGroup | null>(null);
+    const routingLayerRef = useRef<L.LayerGroup | null>(null);
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
     const resizeObserverRef = useRef<ResizeObserver | null>(null);
+    const routingRequestRef = useRef(0);
+    const routingSignatureRef = useRef("");
 
     const sortedMovement = useMemo(
         () => [...movementPoints].sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp)),
@@ -95,6 +137,7 @@ export default function DispatchTrackingMiniMap({
         }).addTo(mapRef.current);
 
         layerRef.current = L.layerGroup().addTo(mapRef.current);
+        routingLayerRef.current = L.layerGroup().addTo(mapRef.current);
 
         requestAnimationFrame(() => mapRef.current?.invalidateSize());
         setTimeout(() => mapRef.current?.invalidateSize(), 120);
@@ -112,6 +155,7 @@ export default function DispatchTrackingMiniMap({
             mapRef.current?.remove();
             mapRef.current = null;
             layerRef.current = null;
+            routingLayerRef.current = null;
         };
     }, []);
 
@@ -123,32 +167,36 @@ export default function DispatchTrackingMiniMap({
 
         layer.clearLayers();
 
+        const normalizedBaseCamp = normalizePoint(baseCampLocation);
+        const normalizedCurrent = normalizePoint(currentLocation);
+        const normalizedDelivery = normalizePoint(deliveryLocation);
+
         const boundsPoints: [number, number][] = [];
 
-        if (baseCampLocation) {
-            boundsPoints.push([baseCampLocation.lat, baseCampLocation.lng]);
-            L.marker([baseCampLocation.lat, baseCampLocation.lng], {
+        if (normalizedBaseCamp) {
+            boundsPoints.push([normalizedBaseCamp.lat, normalizedBaseCamp.lng]);
+            L.marker([normalizedBaseCamp.lat, normalizedBaseCamp.lng], {
                 icon: buildPin("#2563eb", "B"),
             })
-                .bindPopup(`<b>Base Camp</b><br/>${baseCampLocation.label || "Base camp"}<br/>${baseCampLocation.lat.toFixed(6)}, ${baseCampLocation.lng.toFixed(6)}`)
+                .bindPopup(`<b>Base Camp</b><br/>${normalizedBaseCamp.label || "Base camp"}<br/>${normalizedBaseCamp.lat.toFixed(6)}, ${normalizedBaseCamp.lng.toFixed(6)}`)
                 .addTo(layer);
         }
 
-        if (currentLocation) {
-            boundsPoints.push([currentLocation.lat, currentLocation.lng]);
-            L.marker([currentLocation.lat, currentLocation.lng], {
+        if (normalizedCurrent) {
+            boundsPoints.push([normalizedCurrent.lat, normalizedCurrent.lng]);
+            L.marker([normalizedCurrent.lat, normalizedCurrent.lng], {
                 icon: buildPin("#f97316", "C"),
             })
-                .bindPopup(`<b>Current Location</b><br/>${currentLocation.label || "Live truck location"}<br/>${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`)
+                .bindPopup(`<b>Current Location</b><br/>${normalizedCurrent.label || "Live truck location"}<br/>${normalizedCurrent.lat.toFixed(6)}, ${normalizedCurrent.lng.toFixed(6)}`)
                 .addTo(layer);
         }
 
-        if (deliveryLocation) {
-            boundsPoints.push([deliveryLocation.lat, deliveryLocation.lng]);
-            L.marker([deliveryLocation.lat, deliveryLocation.lng], {
+        if (normalizedDelivery) {
+            boundsPoints.push([normalizedDelivery.lat, normalizedDelivery.lng]);
+            L.marker([normalizedDelivery.lat, normalizedDelivery.lng], {
                 icon: buildPin("#16a34a", "D"),
             })
-                .bindPopup(`<b>Destination</b><br/>${deliveryLocation.label || "Dispatch target"}<br/>${deliveryLocation.lat.toFixed(6)}, ${deliveryLocation.lng.toFixed(6)}`)
+                .bindPopup(`<b>Destination</b><br/>${normalizedDelivery.label || "Dispatch target"}<br/>${normalizedDelivery.lat.toFixed(6)}, ${normalizedDelivery.lng.toFixed(6)}`)
                 .addTo(layer);
         }
 
@@ -195,9 +243,120 @@ export default function DispatchTrackingMiniMap({
         });
     }, [sortedMovement, reportEvents, baseCampLocation, currentLocation, deliveryLocation]);
 
+    useEffect(() => {
+        if (!mapRef.current) return;
+
+        // The modal content can change size after render; force map reflow so tiles fill the container.
+        requestAnimationFrame(() => mapRef.current?.invalidateSize());
+        const timeoutId = window.setTimeout(() => mapRef.current?.invalidateSize(), 180);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+        };
+    }, [sortedMovement, reportEvents, baseCampLocation, currentLocation, deliveryLocation]);
+
+    useEffect(() => {
+        const map = mapRef.current;
+        const routingLayer = routingLayerRef.current;
+        if (!map || !routingLayer) return;
+
+        const waypoints = uniqWaypoints([baseCampLocation, currentLocation, deliveryLocation]);
+        const signature = waypoints.map((point) => `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`).join(";");
+
+        if (routingSignatureRef.current === signature) return;
+        routingSignatureRef.current = signature;
+
+        routingLayer.clearLayers();
+
+        if (waypoints.length < 2) return;
+
+        const drawConnectorRoute = () => {
+            const connectorLatLngs = waypoints.map((point) => [point.lat, point.lng] as [number, number]);
+            if (connectorLatLngs.length < 2) return;
+
+            L.polyline(connectorLatLngs, {
+                color: "#16a34a",
+                weight: 4,
+                opacity: 0.82,
+                lineCap: "round",
+                lineJoin: "round",
+            })
+                .bindTooltip("Suggested route", { permanent: false })
+                .addTo(routingLayer);
+        };
+
+        // Always show a visible route cue immediately while street routing is being resolved.
+        drawConnectorRoute();
+
+        const requestId = ++routingRequestRef.current;
+        const coords = waypoints.map((point) => `${point.lng},${point.lat}`).join(";");
+        const routeUrl = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=false&steps=false`;
+
+        void fetch(routeUrl)
+            .then(async (response) => {
+                if (!response.ok) {
+                    throw new Error(`Routing request failed with ${response.status}`);
+                }
+
+                const payload = await response.json();
+                const geometry = payload?.routes?.[0]?.geometry?.coordinates;
+                if (!Array.isArray(geometry) || geometry.length < 2) {
+                    throw new Error("No street route geometry returned");
+                }
+
+                if (routingRequestRef.current !== requestId) return;
+
+                const routeLatLngs = geometry
+                    .map((point: unknown) => {
+                        if (!Array.isArray(point) || point.length < 2) return null;
+
+                        const lng = Number(point[0]);
+                        const lat = Number(point[1]);
+                        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+                        return [lat, lng] as [number, number];
+                    })
+                    .filter((point: [number, number] | null): point is [number, number] => !!point);
+
+                if (routeLatLngs.length < 2) return;
+
+                routingLayer.clearLayers();
+
+                L.polyline(routeLatLngs, {
+                    color: "#14532d",
+                    weight: 10,
+                    opacity: 0.16,
+                    lineCap: "round",
+                    lineJoin: "round",
+                }).addTo(routingLayer);
+
+                L.polyline(routeLatLngs, {
+                    color: "#16a34a",
+                    weight: 5,
+                    opacity: 0.95,
+                    lineCap: "round",
+                    lineJoin: "round",
+                })
+                    .bindTooltip("Suggested street route", { permanent: false })
+                    .addTo(routingLayer);
+
+                const routeBounds = L.latLngBounds(routeLatLngs);
+                map.fitBounds(routeBounds, {
+                    padding: [26, 26],
+                    maxZoom: 16,
+                    animate: true,
+                });
+            })
+            .catch(() => {
+                if (routingRequestRef.current !== requestId) return;
+                routingLayer.clearLayers();
+                drawConnectorRoute();
+            });
+    }, [baseCampLocation, currentLocation, deliveryLocation]);
+
     return (
-        <div className="flex h-full min-h-0 w-full">
-            <div ref={mapContainerRef} className="min-h-0 flex-1 w-full" />
+        <div className="h-full min-h-0 w-full">
+            <div ref={mapContainerRef} className="h-full min-h-0 w-full" />
         </div>
     );
 }
