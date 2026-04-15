@@ -180,19 +180,6 @@ function isDelayReport(entry: any): boolean {
         || signal.includes("rest");
 }
 
-function isResumeReport(entry: any): boolean {
-    const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
-    const kind = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
-    const signal = `${text} ${kind}`;
-
-    return signal.includes("resume")
-        || signal.includes("resumed")
-        || signal.includes("continue dispatch")
-        || signal.includes("continue trip")
-        || signal.includes("back on route")
-        || signal.includes("ongoing");
-}
-
 function isEmergencyReport(entry: any): boolean {
     const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
     const kind = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
