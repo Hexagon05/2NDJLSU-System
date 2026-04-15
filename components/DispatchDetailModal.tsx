@@ -122,11 +122,11 @@ function extractCoordinates(entry: any): Coordinates | null {
     if (!entry || typeof entry !== "object") return null;
 
     const sourceObjects = [
-        entry.CurrentLocation,
-        entry.location,
         entry.currentLocation,
         entry.reportLocation,
         entry.emergencyLocation,
+        entry.CurrentLocation,
+        entry.location,
         entry.coordinates,
         entry,
     ];

@@ -12,7 +12,10 @@ interface EmergencyReport {
   senderId?: string;
   senderName?: string;
   reportedBy?: string;
-  location: { lat: number; lng: number; label?: string };
+  location?: { lat: number; lng: number; label?: string };
+  currentLocation?: { lat: number; lng: number; label?: string };
+  reportLocation?: { lat: number; lng: number; label?: string };
+  emergencyLocation?: { lat: number; lng: number; label?: string };
   description: string;
   imageUrl?: string;
   timestamp: any;
@@ -29,6 +32,55 @@ export default function EmergencyMonitor() {
 
   const isResolvedStatus = (status?: string) => (status || "").trim().toLowerCase() === "resolved";
 
+  const toNumber = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Number(value.trim());
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const extractEmergencyLocation = (entry: any): EmergencyReport["location"] | undefined => {
+    if (!entry || typeof entry !== "object") return undefined;
+
+    const sourceObjects = [
+      entry.currentLocation,
+      entry.reportLocation,
+      entry.emergencyLocation,
+      entry.CurrentLocation,
+      entry.coordinates,
+      entry.location,
+      entry,
+    ];
+
+    for (const source of sourceObjects) {
+      if (!source || typeof source !== "object") continue;
+
+      const geoPointLat = toNumber(source.latitude);
+      const geoPointLng = toNumber(source.longitude);
+      if (geoPointLat !== null && geoPointLng !== null) {
+        return {
+          lat: geoPointLat,
+          lng: geoPointLng,
+          label: typeof source.label === "string" ? source.label : undefined,
+        };
+      }
+
+      const lat = toNumber(source.lat ?? source.latitude);
+      const lng = toNumber(source.lng ?? source.lon ?? source.longitude);
+      if (lat !== null && lng !== null) {
+        return {
+          lat,
+          lng,
+          label: typeof source.label === "string" ? source.label : undefined,
+        };
+      }
+    }
+
+    return undefined;
+  };
+
   useEffect(() => {
     // Don't show emergency on login page or if user not authenticated
     if (!user || pathname === "/login") return;
@@ -44,6 +96,7 @@ export default function EmergencyMonitor() {
         ...(doc.data() as Omit<EmergencyReport, "id">),
         // Keep the actual Firestore document ID as source of truth.
         id: doc.id,
+        location: extractEmergencyLocation(doc.data()) || (doc.data() as any).location,
       }));
 
       // Filter to only active (non-resolved) emergencies
