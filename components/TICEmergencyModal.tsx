@@ -413,10 +413,10 @@ export default function TICEmergencyModal({
   const displayMessages = emergencyInfoMessage ? [emergencyInfoMessage, ...messages] : messages;
 
   return (
-    <div className="fixed inset-0 z-[2147483646] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="relative w-full max-w-2xl mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden animate-scale-in">
+    <div className="fixed inset-0 z-[2147483646] flex items-start justify-center overflow-y-auto bg-black/70 px-3 py-4 backdrop-blur-sm animate-fade-in sm:items-center sm:px-4">
+      <div className="relative my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl animate-scale-in max-h-[96vh]">
         {/* Emergency Header */}
-        <div className="bg-gradient-to-r from-rose-600 to-red-700 px-6 py-5 border-b-4 border-red-800">
+        <div className="bg-gradient-to-r from-rose-600 to-red-700 px-4 py-4 border-b-4 border-red-800 sm:px-6 sm:py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="relative flex h-14 w-14 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm animate-pulse">
@@ -448,7 +448,7 @@ export default function TICEmergencyModal({
                     </span>
                   )}
                 </div>
-                <h2 className="text-2xl font-black text-white tracking-tight">
+                <h2 className="text-xl font-black text-white tracking-tight sm:text-2xl">
                   Emergency Communication
                 </h2>
                 <p className="text-sm text-red-100 font-semibold mt-0.5">
@@ -488,7 +488,7 @@ export default function TICEmergencyModal({
         </div>
 
         {/* Alert Banner */}
-        <div className="bg-gradient-to-r from-red-50 to-rose-50 border-b-2 border-red-200 px-6 py-4">
+        <div className="bg-gradient-to-r from-red-50 to-rose-50 border-b-2 border-red-200 px-4 py-4 sm:px-6">
           <div className="flex items-start gap-3">
             <span className="material-symbols-outlined text-red-600 text-2xl mt-0.5 animate-bounce">
               warning
@@ -537,7 +537,7 @@ export default function TICEmergencyModal({
                 )}
               </div>
 
-              <div className="h-48 overflow-hidden rounded-xl border border-red-100 shadow-inner">
+              <div className="h-44 overflow-hidden rounded-xl border border-red-100 shadow-inner sm:h-48">
                 <EmergencyLocationMap lat={location.lat} lng={location.lng} />
               </div>
 
@@ -550,7 +550,7 @@ export default function TICEmergencyModal({
         </div>
 
         {/* Chat Messages Area */}
-        <div className="h-96 overflow-y-auto bg-gradient-to-b from-slate-50 to-slate-100 p-6 space-y-4 custom-scrollbar">
+        <div className="min-h-[220px] flex-1 overflow-y-auto bg-gradient-to-b from-slate-50 to-slate-100 p-4 space-y-4 custom-scrollbar sm:p-6">
           {displayMessages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
@@ -599,7 +599,7 @@ export default function TICEmergencyModal({
         </div>
 
         {/* Input Area */}
-        <form onSubmit={handleSendMessage} className="border-t-2 border-slate-200 bg-white p-4">
+        <form onSubmit={handleSendMessage} className="border-t-2 border-slate-200 bg-white p-3 sm:p-4">
           <div className="flex gap-3">
             <div className="flex-1 relative">
               <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">

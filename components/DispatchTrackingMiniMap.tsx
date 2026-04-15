@@ -21,7 +21,8 @@ interface DispatchTrackingPoint {
 interface DispatchTrackingMiniMapProps {
     movementPoints: DispatchTrackingPoint[];
     reportEvents: DispatchTrackingPoint[];
-    startLocation?: Coordinates;
+    baseCampLocation?: Coordinates;
+    currentLocation?: Coordinates;
     deliveryLocation?: Coordinates;
 }
 
@@ -30,6 +31,7 @@ const DEFAULT_ZOOM = 11;
 
 const REPORT_COLORS: Record<string, string> = {
     Delay: "#f59e0b",
+    "Stop Over": "#0ea5e9",
     Emergency: "#ef4444",
     "Confirm Delivery": "#10b981",
     "Location Update": "#3b82f6",
@@ -66,12 +68,14 @@ function buildPin(color: string, label: string): L.DivIcon {
 export default function DispatchTrackingMiniMap({
     movementPoints,
     reportEvents,
-    startLocation,
+    baseCampLocation,
+    currentLocation,
     deliveryLocation,
 }: DispatchTrackingMiniMapProps) {
     const mapRef = useRef<L.Map | null>(null);
     const layerRef = useRef<L.LayerGroup | null>(null);
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
+    const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
     const sortedMovement = useMemo(
         () => [...movementPoints].sort((a, b) => toMillis(a.timestamp) - toMillis(b.timestamp)),
@@ -95,7 +99,16 @@ export default function DispatchTrackingMiniMap({
         requestAnimationFrame(() => mapRef.current?.invalidateSize());
         setTimeout(() => mapRef.current?.invalidateSize(), 120);
 
+        if (typeof ResizeObserver !== "undefined" && mapContainerRef.current) {
+            resizeObserverRef.current = new ResizeObserver(() => {
+                mapRef.current?.invalidateSize();
+            });
+            resizeObserverRef.current.observe(mapContainerRef.current);
+        }
+
         return () => {
+            resizeObserverRef.current?.disconnect();
+            resizeObserverRef.current = null;
             mapRef.current?.remove();
             mapRef.current = null;
             layerRef.current = null;
@@ -112,12 +125,21 @@ export default function DispatchTrackingMiniMap({
 
         const boundsPoints: [number, number][] = [];
 
-        if (startLocation) {
-            boundsPoints.push([startLocation.lat, startLocation.lng]);
-            L.marker([startLocation.lat, startLocation.lng], {
-                icon: buildPin("#3b82f6", "S"),
+        if (baseCampLocation) {
+            boundsPoints.push([baseCampLocation.lat, baseCampLocation.lng]);
+            L.marker([baseCampLocation.lat, baseCampLocation.lng], {
+                icon: buildPin("#2563eb", "B"),
             })
-                .bindPopup(`<b>Start Location</b><br/>${startLocation.label || "Dispatch start"}`)
+                .bindPopup(`<b>Base Camp</b><br/>${baseCampLocation.label || "Base camp"}<br/>${baseCampLocation.lat.toFixed(6)}, ${baseCampLocation.lng.toFixed(6)}`)
+                .addTo(layer);
+        }
+
+        if (currentLocation) {
+            boundsPoints.push([currentLocation.lat, currentLocation.lng]);
+            L.marker([currentLocation.lat, currentLocation.lng], {
+                icon: buildPin("#f97316", "C"),
+            })
+                .bindPopup(`<b>Current Location</b><br/>${currentLocation.label || "Live truck location"}<br/>${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}`)
                 .addTo(layer);
         }
 
@@ -126,7 +148,7 @@ export default function DispatchTrackingMiniMap({
             L.marker([deliveryLocation.lat, deliveryLocation.lng], {
                 icon: buildPin("#16a34a", "D"),
             })
-                .bindPopup(`<b>Delivery Location</b><br/>${deliveryLocation.label || "Dispatch target"}`)
+                .bindPopup(`<b>Destination</b><br/>${deliveryLocation.label || "Dispatch target"}<br/>${deliveryLocation.lat.toFixed(6)}, ${deliveryLocation.lng.toFixed(6)}`)
                 .addTo(layer);
         }
 
@@ -171,7 +193,11 @@ export default function DispatchTrackingMiniMap({
             maxZoom: 16,
             animate: true,
         });
-    }, [sortedMovement, reportEvents, startLocation, deliveryLocation]);
+    }, [sortedMovement, reportEvents, baseCampLocation, currentLocation, deliveryLocation]);
 
-    return <div ref={mapContainerRef} className="h-full w-full" />;
+    return (
+        <div className="flex h-full min-h-0 w-full">
+            <div ref={mapContainerRef} className="min-h-0 flex-1 w-full" />
+        </div>
+    );
 }
