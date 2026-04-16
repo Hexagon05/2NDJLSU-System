@@ -623,40 +623,16 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
             const selected = prioritized || fallback;
             if (!selected) {
-                const dispatchRef = doc(db, "dispatches", dispatch.id);
-                const dispatchSnap = await getDoc(dispatchRef);
-                if (!dispatchSnap.exists()) {
-                    setPersonnelReportLocation(null);
-                    return;
-                }
-
-                const dispatchData = dispatchSnap.data() as any;
-                const docLevelLocation = extractCoordinates({
-                    CurrentLocation: dispatchData?.CurrentLocation,
-                    currentLocation: dispatchData?.currentLocation,
-                    reportLocation: dispatchData?.reportLocation,
-                    emergencyLocation: dispatchData?.emergencyLocation,
-                    coordinates: dispatchData?.coordinates,
-                });
-
-                if (!docLevelLocation) {
+                if (!liveRtdbLocation) {
                     setPersonnelReportLocation(null);
                     return;
                 }
 
                 setPersonnelReportLocation({
-                    location: docLevelLocation,
-                    timestamp:
-                        (dispatchData?.lastStatusUpdateAt as Timestamp)
-                        || (dispatchData?.updatedAt as Timestamp)
-                        || null,
-                    reportText: String(
-                        dispatchData?.statusNote
-                        || dispatchData?.delayReason
-                        || dispatchData?.breakReason
-                        || ""
-                    ).trim(),
-                    reportKind: String(dispatchData?.status || "Location Update"),
+                    location: liveRtdbLocation,
+                    timestamp: null,
+                    reportText: "Live location from RTDB",
+                    reportKind: "Location Update",
                 });
                 return;
             }
@@ -820,6 +796,9 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         authLoading,
         user,
         dispatch.id,
+        liveRtdbLocation?.lat,
+        liveRtdbLocation?.lng,
+        liveRtdbLocation?.lastUpdated,
     ]);
 
     useEffect(() => {
