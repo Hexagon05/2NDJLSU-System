@@ -1173,17 +1173,6 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                         lng: parseFloat(startLng),
                         label: startLocationLabel || `${startLat}, ${startLng}`,
                     },
-                    // Live tracking seed point for vehicle position at dispatch start.
-                    CurrentLocation: {
-                        lat: parseFloat(startLat),
-                        lng: parseFloat(startLng),
-                    },
-                    // Backward-compatible alias used by existing readers.
-                    currentLocation: {
-                        lat: parseFloat(startLat),
-                        lng: parseFloat(startLng),
-                    },
-                    UpdatedAt: serverTimestamp(),
                     deliveryLocation: {
                         lat: parseFloat(deliveryLat),
                         lng: parseFloat(deliveryLng),

@@ -718,12 +718,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 }
             });
 
-            const fallbackCurrentLocation = extractCoordinates({
-                CurrentLocation: dispatch.CurrentLocation,
-                currentLocation: dispatch.currentLocation,
-                deliveryLocation: dispatch.deliveryLocation,
-                location: dispatch.location,
-            });
+            const fallbackCurrentLocation = liveRtdbLocation || null;
 
             const normalizedStatus = String(dispatch.status || "").toLowerCase();
             const statusKind =
@@ -739,7 +734,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 trackedReports.push({
                     id: `status-fallback-${dispatch.id}-${statusKind.toLowerCase().replace(/\s+/g, "-")}`,
                     location: fallbackCurrentLocation,
-                    timestamp: dispatch.UpdatedAt || dispatch.updatedAt || dispatch.CurrentLocation?.updatedAt || dispatch.currentLocation?.updatedAt || dispatch.createdAt || null,
+                    timestamp: dispatch.UpdatedAt || dispatch.updatedAt || dispatch.createdAt || null,
                     reportText: String(dispatch.status || "Mobile status update").trim(),
                     reportKind: statusKind,
                 });
@@ -1107,12 +1102,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const canViewProof = sourceDispatch.status === "Successful Dispatch";
     const canCancel = ["Pending", "Approved", "En Route", "Ongoing", "Stop Over"].includes(effectiveDispatchStatus);
     const deliveryLocation = sourceDispatch.deliveryLocation || sourceDispatch.location;
-    const dispatchDocumentCurrentLocation = extractCoordinates({
-        CurrentLocation: sourceDispatch.CurrentLocation,
-        currentLocation: sourceDispatch.currentLocation,
-        location: sourceDispatch.location,
-    });
-    const currentOperationalLocation = liveRtdbLocation || personnelReportLocation?.location || dispatchDocumentCurrentLocation || deliveryLocation;
+    const currentOperationalLocation = liveRtdbLocation || deliveryLocation;
     const destinationCoordinates = {
         lat: deliveryLocation?.lat ?? 0,
         lng: deliveryLocation?.lng ?? 0,

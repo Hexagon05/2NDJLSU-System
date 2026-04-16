@@ -291,14 +291,7 @@ export default function Dashboard() {
       };
     }
 
-    const source = dispatch.CurrentLocation || dispatch.currentLocation;
-    if (!source) return null;
-
-    const lat = Number((source as { lat?: unknown }).lat);
-    const lng = Number((source as { lng?: unknown }).lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-
-    return { lat, lng };
+    return null;
   };
 
   const getDispatchRoutePoints = async (dispatch: Dispatch): Promise<RoutePoint[]> => {
@@ -321,8 +314,6 @@ export default function Dashboard() {
       const fallbackTrail = [
         dispatch.startLocation,
         realtimeCurrent,
-        dispatch.CurrentLocation,
-        dispatch.currentLocation,
         dispatch.location,
       ]
         .map((entry) => {
@@ -341,8 +332,6 @@ export default function Dashboard() {
         [
           dispatch.startLocation,
           realtimeCurrent,
-          dispatch.CurrentLocation,
-          dispatch.currentLocation,
           dispatch.location,
         ]
           .map((entry) => {
