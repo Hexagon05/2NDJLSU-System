@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { onValue, ref as dbRef } from "firebase/database";
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, Timestamp, updateDoc, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db, rtdb } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import * as XLSX from "xlsx";
 import dynamic from "next/dynamic";
@@ -85,6 +86,10 @@ interface DispatchTrackingPoint {
     reportKind: string;
 }
 
+interface RealtimeLocationPoint extends Coordinates {
+    lastUpdated?: number;
+}
+
 function formatTime(ts: Timestamp | null): string {
     if (!ts) return "-";
     return ts.toDate().toLocaleString("en-PH", {
@@ -115,6 +120,62 @@ function toNumber(value: unknown): number | null {
         const parsed = Number(value.trim());
         return Number.isFinite(parsed) ? parsed : null;
     }
+    return null;
+}
+
+function extractRealtimeLocation(entry: unknown): RealtimeLocationPoint | null {
+    if (!entry || typeof entry !== "object") return null;
+
+    const source = entry as {
+        lat?: unknown;
+        lng?: unknown;
+        latitude?: unknown;
+        longitude?: unknown;
+        lon?: unknown;
+        currentLocation?: unknown;
+        location?: unknown;
+        coordinates?: unknown;
+        lastUpdated?: unknown;
+        updatedAt?: unknown;
+        timestamp?: unknown;
+    };
+
+    const sourceObjects = [
+        source.currentLocation,
+        source.location,
+        source.coordinates,
+        source,
+    ];
+
+    for (const candidate of sourceObjects) {
+        if (!candidate || typeof candidate !== "object") continue;
+
+        const point = candidate as {
+            lat?: unknown;
+            lng?: unknown;
+            latitude?: unknown;
+            longitude?: unknown;
+            lon?: unknown;
+        };
+
+        const lat = toNumber(point.lat ?? point.latitude);
+        const lng = toNumber(point.lng ?? point.lon ?? point.longitude);
+        if (lat === null || lng === null) continue;
+
+        const lastUpdated =
+            toNumber(source.lastUpdated)
+            ?? toNumber(source.updatedAt)
+            ?? toNumber(source.timestamp)
+            ?? undefined;
+
+        return {
+            lat,
+            lng,
+            label: "Live truck location",
+            lastUpdated,
+        };
+    }
+
     return null;
 }
 
@@ -258,6 +319,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [loadingReportLocation, setLoadingReportLocation] = useState(false);
     const [trackingEvents, setTrackingEvents] = useState<DispatchTrackingPoint[]>([]);
     const [movementPoints, setMovementPoints] = useState<DispatchTrackingPoint[]>([]);
+    const [liveRtdbLocation, setLiveRtdbLocation] = useState<RealtimeLocationPoint | null>(null);
     const [loadingTrackingOverview, setLoadingTrackingOverview] = useState(false);
     const [selectedReportCategory, setSelectedReportCategory] = useState<"all" | "delay" | "stop-over" | "emergency" | "confirm-delivery">("all");
     const [delaySeenAtMs, setDelaySeenAtMs] = useState(0);
@@ -281,6 +343,49 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
         return () => unsubscribe();
     }, [dispatch.id]);
+
+    useEffect(() => {
+        if (!dispatch.id) {
+            setLiveRtdbLocation(null);
+            return;
+        }
+
+        const locationKeys = Array.from(new Set([dispatch.id, dispatch.dispatchId].filter(Boolean) as string[]));
+        if (locationKeys.length === 0) {
+            setLiveRtdbLocation(null);
+            return;
+        }
+
+        const activeLocationsRef = dbRef(rtdb, "active_locations");
+        const unsubscribe = onValue(
+            activeLocationsRef,
+            (snapshot) => {
+                const payload = snapshot.val() as Record<string, unknown> | null;
+                if (!payload || typeof payload !== "object") {
+                    setLiveRtdbLocation(null);
+                    return;
+                }
+
+                const candidates = locationKeys
+                    .map((key) => extractRealtimeLocation(payload[key]))
+                    .filter((point): point is RealtimeLocationPoint => !!point);
+
+                if (candidates.length === 0) {
+                    setLiveRtdbLocation(null);
+                    return;
+                }
+
+                const freshest = candidates.sort((left, right) => (right.lastUpdated || 0) - (left.lastUpdated || 0))[0];
+                setLiveRtdbLocation(freshest);
+            },
+            (error) => {
+                console.error("Error listening to RTDB active_locations in dispatch detail:", error);
+                setLiveRtdbLocation(null);
+            }
+        );
+
+        return () => unsubscribe();
+    }, [dispatch.id, dispatch.dispatchId]);
 
     useEffect(() => {
         if (authLoading || !user) {
@@ -1002,7 +1107,12 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const canViewProof = sourceDispatch.status === "Successful Dispatch";
     const canCancel = ["Pending", "Approved", "En Route", "Ongoing", "Stop Over"].includes(effectiveDispatchStatus);
     const deliveryLocation = sourceDispatch.deliveryLocation || sourceDispatch.location;
-    const currentOperationalLocation = personnelReportLocation?.location || deliveryLocation;
+    const dispatchDocumentCurrentLocation = extractCoordinates({
+        CurrentLocation: sourceDispatch.CurrentLocation,
+        currentLocation: sourceDispatch.currentLocation,
+        location: sourceDispatch.location,
+    });
+    const currentOperationalLocation = liveRtdbLocation || personnelReportLocation?.location || dispatchDocumentCurrentLocation || deliveryLocation;
     const destinationCoordinates = {
         lat: deliveryLocation?.lat ?? 0,
         lng: deliveryLocation?.lng ?? 0,

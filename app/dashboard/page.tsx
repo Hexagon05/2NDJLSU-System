@@ -21,7 +21,8 @@ import {
   doc,
   updateDoc,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { onValue, ref as dbRef } from "firebase/database";
+import { db, rtdb } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity-logger";
 
 const FleetMap = dynamic(
@@ -71,6 +72,10 @@ interface Vehicle {
 interface RoutePoint {
   lat: number;
   lng: number;
+}
+
+interface RealtimeLocationPoint extends RoutePoint {
+  lastUpdated?: number;
 }
 
 interface ActiveRoutePlan {
@@ -136,6 +141,7 @@ export default function Dashboard() {
   const [vehicleHint, setVehicleHint] = useState("");
   const [selectedVehicleRoutePoints, setSelectedVehicleRoutePoints] = useState<RoutePoint[]>([]);
   const [mapViewMode, setMapViewMode] = useState<MapViewMode>("truck");
+  const [liveLocationsByDispatchId, setLiveLocationsByDispatchId] = useState<Record<string, RealtimeLocationPoint>>({});
 
   // Base camp coordinate: 9°44'53.5"N 118°46'15.9"E
   const BASE_CAMP_COORDINATES = {
@@ -206,6 +212,61 @@ export default function Dashboard() {
     return null;
   };
 
+  const extractRealtimeLocation = (entry: unknown): RealtimeLocationPoint | null => {
+    if (!entry || typeof entry !== "object") return null;
+
+    const source = entry as {
+      lat?: unknown;
+      lng?: unknown;
+      latitude?: unknown;
+      longitude?: unknown;
+      lon?: unknown;
+      currentLocation?: unknown;
+      location?: unknown;
+      coordinates?: unknown;
+      lastUpdated?: unknown;
+      updatedAt?: unknown;
+      timestamp?: unknown;
+    };
+
+    const sourceObjects = [
+      source.currentLocation,
+      source.location,
+      source.coordinates,
+      source,
+    ];
+
+    for (const candidate of sourceObjects) {
+      if (!candidate || typeof candidate !== "object") continue;
+
+      const point = candidate as {
+        lat?: unknown;
+        lng?: unknown;
+        latitude?: unknown;
+        longitude?: unknown;
+        lon?: unknown;
+      };
+
+      const lat = toNumber(point.lat ?? point.latitude);
+      const lng = toNumber(point.lng ?? point.lon ?? point.longitude);
+      if (lat === null || lng === null) continue;
+
+      const lastUpdated =
+        toNumber(source.lastUpdated)
+        ?? toNumber(source.updatedAt)
+        ?? toNumber(source.timestamp)
+        ?? undefined;
+
+      return {
+        lat,
+        lng,
+        lastUpdated,
+      };
+    }
+
+    return null;
+  };
+
   const uniqRoutePoints = (points: RoutePoint[]): RoutePoint[] => {
     const seen = new Set<string>();
 
@@ -220,6 +281,16 @@ export default function Dashboard() {
   const getDispatchCurrentLocation = (dispatch: Dispatch | null): { lat: number; lng: number } | null => {
     if (!dispatch) return null;
 
+    const liveLocation =
+      liveLocationsByDispatchId[dispatch.id]
+      || (dispatch.dispatchId ? liveLocationsByDispatchId[dispatch.dispatchId] : undefined);
+    if (liveLocation) {
+      return {
+        lat: liveLocation.lat,
+        lng: liveLocation.lng,
+      };
+    }
+
     const source = dispatch.CurrentLocation || dispatch.currentLocation;
     if (!source) return null;
 
@@ -232,6 +303,8 @@ export default function Dashboard() {
 
   const getDispatchRoutePoints = async (dispatch: Dispatch): Promise<RoutePoint[]> => {
     if (!dispatch.id) return [];
+
+    const realtimeCurrent = getDispatchCurrentLocation(dispatch);
 
     try {
       const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
@@ -247,6 +320,7 @@ export default function Dashboard() {
 
       const fallbackTrail = [
         dispatch.startLocation,
+        realtimeCurrent,
         dispatch.CurrentLocation,
         dispatch.currentLocation,
         dispatch.location,
@@ -266,6 +340,7 @@ export default function Dashboard() {
       return uniqRoutePoints(
         [
           dispatch.startLocation,
+          realtimeCurrent,
           dispatch.CurrentLocation,
           dispatch.currentLocation,
           dispatch.location,
@@ -281,6 +356,49 @@ export default function Dashboard() {
       );
     }
   };
+
+  useEffect(() => {
+    if (!user) return;
+
+    const activeDispatches = dispatches.filter((entry) => isActiveDispatch(entry.status));
+    if (activeDispatches.length === 0) {
+      setLiveLocationsByDispatchId({});
+      return;
+    }
+
+    const activeIds = new Set<string>();
+    activeDispatches.forEach((entry) => {
+      if (entry.id) activeIds.add(entry.id);
+      if (entry.dispatchId) activeIds.add(entry.dispatchId);
+    });
+
+    const activeLocationsRef = dbRef(rtdb, "active_locations");
+    const unsubscribe = onValue(
+      activeLocationsRef,
+      (snapshot) => {
+        const payload = snapshot.val() as Record<string, unknown> | null;
+        const nextLocations: Record<string, RealtimeLocationPoint> = {};
+
+        if (payload && typeof payload === "object") {
+          Object.entries(payload).forEach(([dispatchId, entry]) => {
+            if (!activeIds.has(dispatchId)) return;
+
+            const parsed = extractRealtimeLocation(entry);
+            if (!parsed) return;
+
+            nextLocations[dispatchId] = parsed;
+          });
+        }
+
+        setLiveLocationsByDispatchId(nextLocations);
+      },
+      (error) => {
+        console.error("Error listening to RTDB active_locations:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user, dispatches]);
 
   const getDispatchSortTime = (dispatch: Dispatch): number => {
     const directUpdated = dispatch.UpdatedAt || dispatch.updatedAt;

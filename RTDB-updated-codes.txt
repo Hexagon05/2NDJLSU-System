@@ -1,0 +1,612 @@
+authview model
+
+package com.example.logistic_app.ui.viewmodel
+
+import android.net.Uri
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.logistic_app.data.model.Dispatch
+import com.example.logistic_app.data.model.Personnel
+import com.example.logistic_app.utils.CloudinaryHelper
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Query
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+
+class AuthViewModel : ViewModel() {
+    private val auth = FirebaseAuth.getInstance()
+    private val db = FirebaseFirestore.getInstance()
+    // Initialize RTDB with your specific regional URL
+    private val rtdb = FirebaseDatabase.getInstance("https://lsu-tracker-default-rtdb.firebaseio.com/")
+    private var dispatchListener: ListenerRegistration? = null
+
+    private val _user = MutableStateFlow<FirebaseUser?>(auth.currentUser)
+    val user: StateFlow<FirebaseUser?> = _user.asStateFlow()
+
+    private val _personnel = MutableStateFlow<Personnel?>(null)
+    val personnel: StateFlow<Personnel?> = _personnel.asStateFlow()
+
+    private val _activeDispatch = MutableStateFlow<Dispatch?>(null)
+    val activeDispatch: StateFlow<Dispatch?> = _activeDispatch.asStateFlow()
+
+    private val _isLoading = mutableStateOf(false)
+    val isLoading: State<Boolean> = _isLoading
+
+    private val _error = mutableStateOf<String?>(null)
+    val error: State<String?> = _error
+
+    init {
+        viewModelScope.launch {
+            _user.collect { currentUser ->
+                if (currentUser != null) {
+                    fetchPersonnelData(currentUser.email ?: "")
+                } else {
+                    clearSession()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            _personnel.collect { p ->
+                if (p != null) {
+                    startDispatchListener(p)
+                }
+            }
+        }
+    }
+
+    fun signIn(email: String, password: String, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                auth.signInWithEmailAndPassword(email, password).await()
+                _user.value = auth.currentUser
+                onSuccess()
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Authentication failed"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    private fun fetchPersonnelData(email: String) {
+        viewModelScope.launch {
+            try {
+                var snapshot = db.collection("personnelAccount")
+                    .whereEqualTo("email", email)
+                    .get()
+                    .await()
+                
+                if (snapshot.isEmpty) {
+                    snapshot = db.collection("personnelAccount")
+                        .whereEqualTo("email", email.lowercase())
+                        .get()
+                        .await()
+                }
+
+                if (!snapshot.isEmpty) {
+                    val doc = snapshot.documents.first()
+                    _personnel.value = doc.toObject(Personnel::class.java)?.copy(id = doc.id)
+                } else {
+                    _error.value = "Personnel account not found"
+                }
+            } catch (e: Exception) {
+                _error.value = "Error loading personnel: ${e.message}"
+            }
+        }
+    }
+
+    private fun startDispatchListener(p: Personnel) {
+        dispatchListener?.remove()
+        val personnelName = "[${p.rank}] ${p.lastName}, ${p.firstName}"
+        
+        dispatchListener = db.collection("dispatches")
+            .whereEqualTo("personnels", personnelName)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    _error.value = "Dispatch Listener Error: ${error.message}"
+                    return@addSnapshotListener
+                }
+                
+                if (snapshot != null && !snapshot.isEmpty) {
+                    val activeOnes = snapshot.documents
+                        .mapNotNull { it.toObject(Dispatch::class.java)?.copy(id = it.id) }
+                        .filter { it.status != "Delivered" }
+                        .sortedByDescending { it.createdAt }
+                    
+                    _activeDispatch.value = activeOnes.firstOrNull()
+                } else {
+                    _activeDispatch.value = null
+                }
+            }
+    }
+
+    /**
+     * Updates the status of the current dispatch in Firestore.
+     * Real-time location tracking logic in the UI will respond to "Ongoing" status.
+     */
+    fun updateDispatchStatus(status: String) {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        viewModelScope.launch {
+            try {
+                db.collection("dispatches").document(dispatchId)
+                    .update("status", status)
+                    .await()
+            } catch (e: Exception) {
+                _error.value = "Failed to update status: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Updates the live location of the truck in Firebase Realtime Database.
+     * Web Admin should listen to 'active_locations/{dispatchId}' for updates.
+     */
+    fun updateLiveLocation(lat: Double, lng: Double) {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        val status = _activeDispatch.value?.status ?: return
+        
+        // Only update RTDB if dispatch is actually ongoing or reported
+        if (status == "Ongoing" || status == "Reported") {
+            val locationData = mapOf(
+                "lat" to lat,
+                "lng" to lng,
+                "lastUpdated" to System.currentTimeMillis()
+            )
+            rtdb.getReference("active_locations").child(dispatchId)
+                .setValue(locationData)
+        }
+    }
+
+    fun confirmDelivery(
+        receiverName: String,
+        arrivalTime: String,
+        imageUri: Uri?,
+        onSuccess: () -> Unit
+    ) {
+        val dispatchId = _activeDispatch.value?.id ?: return
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                var imageUrl = ""
+                if (imageUri != null) {
+                    imageUrl = CloudinaryHelper.uploadImage(imageUri)
+                }
+
+                val updates = hashMapOf(
+                    "status" to "Delivered",
+                    "receiverName" to receiverName,
+                    "arrivalTime" to arrivalTime,
+                    "proofOfDelivery" to imageUrl
+                )
+
+                // Update Firestore status
+                db.collection("dispatches").document(dispatchId)
+                    .update(updates as Map<String, Any>)
+                    .await()
+                
+                // Remove live location from RTDB since delivery is complete
+                rtdb.getReference("active_locations").child(dispatchId).removeValue()
+                
+                _activeDispatch.value = null
+                onSuccess()
+            } catch (e: Exception) {
+                _error.value = "Delivery confirmation failed: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    private fun clearSession() {
+        dispatchListener?.remove()
+        _personnel.value = null
+        _activeDispatch.value = null
+    }
+
+    fun signOut() {
+        auth.signOut()
+        _user.value = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        dispatchListener?.remove()
+    }
+}
+
+
+common components
+
+package com.example.logistic_app.ui.components
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
+import android.net.Uri
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AddAPhoto
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import coil.compose.rememberAsyncImagePainter
+import com.example.logistic_app.R
+import com.example.logistic_app.ui.theme.*
+import kotlinx.coroutines.delay
+import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.util.BoundingBox
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.compass.CompassOverlay
+import org.osmdroid.views.overlay.compass.InternalCompassOrientationProvider
+import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+
+@Composable
+fun AppLogo(modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(id = R.drawable.app_logo),
+        contentDescription = "App Logo",
+        modifier = modifier,
+        contentScale = ContentScale.Fit
+    )
+}
+
+@Composable
+fun MapPlaceholder(
+    modifier: Modifier = Modifier,
+    text: String = "Map View Placeholder",
+    latitude: Double = 14.5995, // Default to Manila
+    longitude: Double = 120.9842,
+    showUserLocation: Boolean = false,
+    snapToUserLocation: Int = 0,
+    useRedMarker: Boolean = false,
+    dispatcherLat: Double? = null,
+    dispatcherLng: Double? = null,
+    onMapClick: (() -> Unit)? = null,
+    onMapClickWithPoint: ((GeoPoint) -> Unit)? = null,
+    onLongClick: ((GeoPoint) -> Unit)? = null,
+    onCenterChanged: ((GeoPoint) -> Unit)? = null,
+    onLocationUpdated: ((Double, Double) -> Unit)? = null // New callback for RTDB tracking
+) {
+    val context = LocalContext.current
+    val mapView = remember { MapView(context) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Set up location overlay
+    val locationOverlay = remember(mapView) {
+        MyLocationNewOverlay(GpsMyLocationProvider(context), mapView).apply {
+            enableMyLocation()
+            setDrawAccuracyEnabled(true)
+            
+            // Custom truck icon for user location
+            val truckDrawable = ContextCompat.getDrawable(context, R.drawable.ic_truck)
+            truckDrawable?.let { drawable ->
+                val bitmap = Bitmap.createBitmap(
+                    drawable.intrinsicWidth,
+                    drawable.intrinsicHeight,
+                    Bitmap.Config.ARGB_8888
+                )
+                val canvas = Canvas(bitmap)
+                drawable.setBounds(0, 0, canvas.width, canvas.height)
+                drawable.draw(canvas)
+                setPersonIcon(bitmap)
+                setDirectionIcon(bitmap)
+            }
+        }
+    }
+
+    // RTDB Location Update Loop
+    LaunchedEffect(showUserLocation) {
+        if (showUserLocation && onLocationUpdated != null) {
+            while (true) {
+                val loc = locationOverlay.myLocation
+                if (loc != null) {
+                    onLocationUpdated(loc.latitude, loc.longitude)
+                }
+                delay(5000) // Update every 5 seconds to balance real-time vs battery/data
+            }
+        }
+    }
+
+    // Marker for Dispatcher
+    val dispatcherMarker = remember(mapView) {
+        Marker(mapView).apply {
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            icon = ContextCompat.getDrawable(context, org.osmdroid.library.R.drawable.person)
+            title = "Dispatcher"
+        }
+    }
+
+    // Set up compass overlay
+    val compassOverlay = remember(mapView) {
+        CompassOverlay(context, InternalCompassOrientationProvider(context), mapView).apply {
+            enableCompass()
+        }
+    }
+
+    // Set up rotation overlay
+    val rotationOverlay = remember(mapView) {
+        RotationGestureOverlay(mapView).apply {
+            isEnabled = true
+        }
+    }
+
+    // Set up click listener overlay
+    val eventsOverlay = remember(onMapClick, onMapClickWithPoint, onLongClick) {
+        MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean {
+                if (p != null && onMapClickWithPoint != null) {
+                    onMapClickWithPoint.invoke(p)
+                    return true
+                }
+                onMapClick?.invoke()
+                return true
+            }
+            override fun longPressHelper(p: GeoPoint?): Boolean {
+                if (p != null) {
+                    onLongClick?.invoke(p)
+                }
+                return true
+            }
+        })
+    }
+
+    // Marker for destination
+    val destinationMarker = remember(mapView) {
+        Marker(mapView).apply {
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+        }
+    }
+
+    // Snap to user location trigger - ONLY when snapToUserLocation changes (e.g. button click)
+    LaunchedEffect(snapToUserLocation) {
+        if (snapToUserLocation > 0 && showUserLocation) {
+            val myLocation = locationOverlay.myLocation
+            if (myLocation != null) {
+                mapView.controller.animateTo(myLocation)
+                mapView.controller.setZoom(18.0)
+            } else {
+                locationOverlay.runOnFirstFix {
+                    val location = locationOverlay.myLocation
+                    if (location != null) {
+                        mapView.post {
+                            mapView.controller.animateTo(location)
+                            mapView.controller.setZoom(18.0)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fit ALL points in view initially (Truck, Dispatcher, Destination)
+    LaunchedEffect(latitude, longitude, dispatcherLat, dispatcherLng, showUserLocation) {
+        locationOverlay.runOnFirstFix {
+            val userLoc = locationOverlay.myLocation
+            mapView.post {
+                val points = mutableListOf<GeoPoint>()
+                points.add(GeoPoint(latitude, longitude)) // Delivery pinpoint
+                if (dispatcherLat != null && dispatcherLng != null) {
+                    points.add(GeoPoint(dispatcherLat, dispatcherLng)) // Dispatcher
+                }
+                if (userLoc != null) {
+                    points.add(userLoc) // User/Truck
+                }
+
+                if (points.size >= 2) {
+                    val box = BoundingBox.fromGeoPoints(points)
+                    // Increase scale slightly to add padding around markers
+                    mapView.zoomToBoundingBox(box.increaseByScale(1.4f), true)
+                } else if (points.size == 1) {
+                    mapView.controller.setCenter(points[0])
+                    mapView.controller.setZoom(15.0)
+                }
+            }
+        }
+    }
+
+    // Handle Lifecycle events for MapView
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    mapView.onResume()
+                    if (showUserLocation) {
+                        locationOverlay.enableMyLocation()
+                    }
+                    compassOverlay.enableCompass()
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    mapView.onPause()
+                    locationOverlay.disableMyLocation()
+                    compassOverlay.disableCompass()
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFFECEFF1))
+            .border(1.dp, Color(0xFFCFD8DC), RoundedCornerShape(16.dp))
+            .let { 
+                if (onMapClick != null && onMapClickWithPoint == null) it.clickable { onMapClick() } else it
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        AndroidView(
+            factory = {
+                mapView.apply {
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setMultiTouchControls(true)
+                    controller.setZoom(15.0)
+                    controller.setCenter(GeoPoint(latitude, longitude))
+
+                    overlays.add(compassOverlay)
+                    overlays.add(rotationOverlay)
+
+                    if (showUserLocation) {
+                        overlays.add(locationOverlay)
+                    }
+
+                    overlays.add(eventsOverlay)
+                    
+                    if (onCenterChanged == null) {
+                        overlays.add(destinationMarker)
+                    }
+
+                    if (dispatcherLat != null && dispatcherLng != null) {
+                        overlays.add(dispatcherMarker)
+                    }
+
+                    addMapListener(object : MapListener {
+                        override fun onScroll(event: ScrollEvent?): Boolean {
+                            event?.source?.let { view ->
+                                onCenterChanged?.invoke(view.mapCenter as GeoPoint)
+                            }
+                            return true
+                        }
+                        override fun onZoom(event: ZoomEvent?): Boolean = true
+                    })
+                }
+            },
+            update = { view ->
+                destinationMarker.position = GeoPoint(latitude, longitude)
+                destinationMarker.title = text
+                
+                // Revert to standard delivery pinpoint
+                destinationMarker.icon = ContextCompat.getDrawable(context, org.osmdroid.library.R.drawable.marker_default)
+                
+                if (useRedMarker) {
+                    destinationMarker.icon?.mutate()?.colorFilter = PorterDuffColorFilter(android.graphics.Color.RED, PorterDuff.Mode.SRC_IN)
+                }
+
+                if (dispatcherLat != null && dispatcherLng != null) {
+                    dispatcherMarker.position = GeoPoint(dispatcherLat, dispatcherLng)
+                    if (!view.overlays.contains(dispatcherMarker)) {
+                        view.overlays.add(dispatcherMarker)
+                    }
+                } else {
+                    view.overlays.remove(dispatcherMarker)
+                }
+
+                if (showUserLocation && !view.overlays.contains(locationOverlay)) {
+                    view.overlays.add(locationOverlay)
+                    locationOverlay.enableMyLocation()
+                } else if (!showUserLocation && view.overlays.contains(locationOverlay)) {
+                    view.overlays.remove(locationOverlay)
+                    locationOverlay.disableMyLocation()
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Composable
+fun PhotoUploadBox(
+    modifier: Modifier = Modifier, 
+    label: String = "Upload Photo",
+    selectedImageUri: Uri? = null,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFFF5F5F5))
+            .border(2.dp, if (selectedImageUri != null) NavyBlue else Color(0xFFE0E0E0), RoundedCornerShape(16.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        if (selectedImageUri != null) {
+            Image(
+                painter = rememberAsyncImagePainter(selectedImageUri),
+                contentDescription = "Selected Photo",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.AddAPhoto, contentDescription = null, tint = Color.White)
+            }
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    color = NavyBlue.copy(alpha = 0.1f)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Rounded.AddAPhoto,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = NavyBlue
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(label, color = TextPrimary, fontSize = 14.sp)
+                Text("Tap to capture or upload", color = TextSecondary, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+dispatch screen
