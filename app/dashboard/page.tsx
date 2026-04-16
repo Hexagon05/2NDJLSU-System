@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import dynamic from "next/dynamic";
+import { useTheme } from "@/lib/theme-context";
 import DispatchModal from "@/components/DispatchModal";
 import DispatchDetailModal from "@/components/DispatchDetailModal";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
@@ -111,6 +112,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 export default function Dashboard() {
   const { user, loading, signOut } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDispatchModal, setShowDispatchModal] = useState(false);
@@ -823,6 +825,22 @@ export default function Dashboard() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-pressed={theme === "dark"}
+                className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all duration-200 ${theme === "dark"
+                  ? "border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700 shadow-lg shadow-slate-900/20"
+                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-sm"
+                  }`}
+                title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "1.1rem" }}>
+                  {theme === "dark" ? "light_mode" : "dark_mode"}
+                </span>
+                <span className="hidden sm:inline">{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
+              </button>
+
               {/* â”€â”€ Create Dispatch Button â”€â”€ */}
               <button
                 onClick={() => setShowDispatchModal(true)}

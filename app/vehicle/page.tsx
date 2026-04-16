@@ -2100,7 +2100,7 @@ export default function VehiclePage() {
             <span className="material-symbols-outlined" style={{ fontSize: "1.5rem" }}>close</span>
           </button>
           
-          <div className="relative max-w-5xl max-h-[90vh] w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="relative flex max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] items-center justify-center" onClick={(e) => e.stopPropagation()}>
             {/* Image Label */}
             <div className="absolute top-0 left-0 right-0 z-10 bg-gradient-to-b from-black/70 to-transparent p-6">
               <h3 className="text-white text-xl font-bold drop-shadow-lg">{enlargedImage.label}</h3>
@@ -2110,7 +2110,7 @@ export default function VehiclePage() {
             <img
               src={enlargedImage.url}
               alt={enlargedImage.label}
-              className="w-full h-full object-contain rounded-lg shadow-2xl"
+              className="block max-h-[calc(100vh-8rem)] max-w-[calc(100vw-2rem)] w-auto h-auto object-contain rounded-lg shadow-2xl"
             />
             
             {/* Close hint */}
