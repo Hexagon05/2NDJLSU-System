@@ -328,6 +328,10 @@ export default function Dashboard() {
     return null;
   };
 
+  const getActiveDispatchLocationKeys = (dispatch: Dispatch): string[] => {
+    return Array.from(new Set([dispatch.id, dispatch.dispatchId].filter(Boolean) as string[]));
+  };
+
   const getDispatchRoutePoints = async (dispatch: Dispatch): Promise<RoutePoint[]> => {
     if (!dispatch.id) return [];
 
@@ -391,109 +395,129 @@ export default function Dashboard() {
       return;
     }
 
-    const activeIds = new Set<string>();
-    activeDispatches.forEach((entry) => {
-      if (entry.id) activeIds.add(entry.id);
-      if (entry.dispatchId) activeIds.add(entry.dispatchId);
+    const activeLocationKeys = Array.from(
+      new Set(activeDispatches.flatMap((entry) => getActiveDispatchLocationKeys(entry)))
+    );
+    const activeKeySet = new Set(activeLocationKeys);
+
+    const syncIdleVehicles = () => {
+      const currentTime = Date.now();
+      const nextIdleVehicles = new Set<string>();
+
+      Object.entries(idleTrackingRef.current).forEach(([dispatchId, tracked]) => {
+        if (!activeKeySet.has(dispatchId)) return;
+
+        const stationaryDuration = currentTime - tracked.stationarySince;
+        if (stationaryDuration >= IDLE_TIME_THRESHOLD_MS) {
+          nextIdleVehicles.add(dispatchId);
+        }
+      });
+
+      setIdleVehicles(nextIdleVehicles);
+    };
+
+    const applyRealtimeLocation = (dispatchId: string, parsed: RealtimeLocationPoint | null) => {
+      const currentTime = Date.now();
+
+      setLiveLocationsByDispatchId((previous) => {
+        const next = { ...previous };
+        if (parsed) {
+          next[dispatchId] = parsed;
+        } else {
+          delete next[dispatchId];
+        }
+        return next;
+      });
+
+      if (!parsed) {
+        delete idleTrackingRef.current[dispatchId];
+        syncIdleVehicles();
+        return;
+      }
+
+      const tracked = idleTrackingRef.current[dispatchId];
+      if (!tracked) {
+        idleTrackingRef.current[dispatchId] = {
+          anchorLat: parsed.lat,
+          anchorLng: parsed.lng,
+          lastLat: parsed.lat,
+          lastLng: parsed.lng,
+          stationarySince: currentTime,
+          lastSeen: currentTime,
+        };
+        syncIdleVehicles();
+        return;
+      }
+
+      const anchorDistance = calculateDistance(
+        tracked.anchorLat,
+        tracked.anchorLng,
+        parsed.lat,
+        parsed.lng
+      );
+
+      const stepDistance = calculateDistance(
+        tracked.lastLat,
+        tracked.lastLng,
+        parsed.lat,
+        parsed.lng
+      );
+
+      if (anchorDistance > IDLE_DISTANCE_THRESHOLD_METERS || stepDistance > IDLE_DISTANCE_THRESHOLD_METERS) {
+        idleTrackingRef.current[dispatchId] = {
+          anchorLat: parsed.lat,
+          anchorLng: parsed.lng,
+          lastLat: parsed.lat,
+          lastLng: parsed.lng,
+          stationarySince: currentTime,
+          lastSeen: currentTime,
+        };
+        syncIdleVehicles();
+        return;
+      }
+
+      tracked.lastLat = parsed.lat;
+      tracked.lastLng = parsed.lng;
+      tracked.lastSeen = currentTime;
+      syncIdleVehicles();
+    };
+
+    const unsubscribers = activeLocationKeys.map((dispatchId) => {
+      const locationRef = dbRef(rtdb, `active_locations/${dispatchId}`);
+
+      return onValue(
+        locationRef,
+        (snapshot) => {
+          const parsed = extractRealtimeLocation(snapshot.val());
+          applyRealtimeLocation(dispatchId, parsed);
+        },
+        (error) => {
+          console.error(`Error listening to RTDB active_locations/${dispatchId}:`, error);
+          applyRealtimeLocation(dispatchId, null);
+        }
+      );
     });
 
-    const activeLocationsRef = dbRef(rtdb, "active_locations");
-    const unsubscribe = onValue(
-      activeLocationsRef,
-      (snapshot) => {
-        const payload = snapshot.val() as Record<string, unknown> | null;
-        const nextLocations: Record<string, RealtimeLocationPoint> = {};
-        const currentTime = Date.now();
-        const newIdleVehicles = new Set<string>();
-        const nextIdleTracking = { ...idleTrackingRef.current };
-
-        if (payload && typeof payload === "object") {
-          Object.entries(payload).forEach(([dispatchId, entry]) => {
-            if (!activeIds.has(dispatchId)) return;
-
-            const parsed = extractRealtimeLocation(entry);
-            if (!parsed) return;
-
-            nextLocations[dispatchId] = parsed;
-
-            const tracked = nextIdleTracking[dispatchId];
-            if (!tracked) {
-              nextIdleTracking[dispatchId] = {
-                anchorLat: parsed.lat,
-                anchorLng: parsed.lng,
-                lastLat: parsed.lat,
-                lastLng: parsed.lng,
-                stationarySince: currentTime,
-                lastSeen: currentTime,
-              };
-              return;
-            }
-
-            const anchorDistance = calculateDistance(
-              tracked.anchorLat,
-              tracked.anchorLng,
-              parsed.lat,
-              parsed.lng
-            );
-
-            const stepDistance = calculateDistance(
-              tracked.lastLat,
-              tracked.lastLng,
-              parsed.lat,
-              parsed.lng
-            );
-
-            if (anchorDistance > IDLE_DISTANCE_THRESHOLD_METERS) {
-              nextIdleTracking[dispatchId] = {
-                anchorLat: parsed.lat,
-                anchorLng: parsed.lng,
-                lastLat: parsed.lat,
-                lastLng: parsed.lng,
-                stationarySince: currentTime,
-                lastSeen: currentTime,
-              };
-              return;
-            }
-
-            // Any meaningful movement outside the idle radius clears idle tracking baseline.
-            if (stepDistance > IDLE_DISTANCE_THRESHOLD_METERS) {
-              nextIdleTracking[dispatchId] = {
-                anchorLat: parsed.lat,
-                anchorLng: parsed.lng,
-                lastLat: parsed.lat,
-                lastLng: parsed.lng,
-                stationarySince: currentTime,
-                lastSeen: currentTime,
-              };
-              return;
-            }
-
-            tracked.lastLat = parsed.lat;
-            tracked.lastLng = parsed.lng;
-            tracked.lastSeen = currentTime;
-            const stationaryDuration = currentTime - tracked.stationarySince;
-            if (stationaryDuration >= IDLE_TIME_THRESHOLD_MS) {
-              newIdleVehicles.add(dispatchId);
-            }
-          });
+    setLiveLocationsByDispatchId((previous) => {
+      const next: Record<string, RealtimeLocationPoint> = {};
+      Object.entries(previous).forEach(([key, value]) => {
+        if (activeKeySet.has(key)) {
+          next[key] = value;
         }
+      });
+      return next;
+    });
 
-        Object.keys(nextIdleTracking).forEach((trackedDispatchId) => {
-          if (!(trackedDispatchId in nextLocations)) {
-            delete nextIdleTracking[trackedDispatchId];
-          }
-        });
-
-        idleTrackingRef.current = nextIdleTracking;
-        setLiveLocationsByDispatchId(nextLocations);
-        setIdleVehicles(newIdleVehicles);
-      },
-      (error) => {
-        console.error("Error listening to RTDB active_locations:", error);
+    Object.keys(idleTrackingRef.current).forEach((trackedDispatchId) => {
+      if (!activeKeySet.has(trackedDispatchId)) {
+        delete idleTrackingRef.current[trackedDispatchId];
       }
-    );
+    });
+    syncIdleVehicles();
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
   }, [user, dispatches]);
 
   useEffect(() => {

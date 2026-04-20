@@ -356,35 +356,24 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             return;
         }
 
-        const activeLocationsRef = dbRef(rtdb, "active_locations");
-        const unsubscribe = onValue(
-            activeLocationsRef,
-            (snapshot) => {
-                const payload = snapshot.val() as Record<string, unknown> | null;
-                if (!payload || typeof payload !== "object") {
+        const unsubscribers = locationKeys.map((key) => {
+            const locationRef = dbRef(rtdb, `active_locations/${key}`);
+
+            return onValue(
+                locationRef,
+                (snapshot) => {
+                    setLiveRtdbLocation(extractRealtimeLocation(snapshot.val()));
+                },
+                (error) => {
+                    console.error(`Error listening to RTDB active_locations/${key} in dispatch detail:`, error);
                     setLiveRtdbLocation(null);
-                    return;
                 }
+            );
+        });
 
-                const candidates = locationKeys
-                    .map((key) => extractRealtimeLocation(payload[key]))
-                    .filter((point): point is RealtimeLocationPoint => !!point);
-
-                if (candidates.length === 0) {
-                    setLiveRtdbLocation(null);
-                    return;
-                }
-
-                const freshest = candidates.sort((left, right) => (right.lastUpdated || 0) - (left.lastUpdated || 0))[0];
-                setLiveRtdbLocation(freshest);
-            },
-            (error) => {
-                console.error("Error listening to RTDB active_locations in dispatch detail:", error);
-                setLiveRtdbLocation(null);
-            }
-        );
-
-        return () => unsubscribe();
+        return () => {
+            unsubscribers.forEach((unsubscribe) => unsubscribe());
+        };
     }, [dispatch.id, dispatch.dispatchId]);
 
     useEffect(() => {
