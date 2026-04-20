@@ -10,6 +10,8 @@ type FleetVehicle = {
   status: string;
   lat?: number;
   lng?: number;
+  isIdle?: boolean;
+  hasActiveDispatch?: boolean;
 };
 
 type RoutePoint = {
@@ -260,7 +262,28 @@ export default function FleetMap({
           }).addTo(allRoutesLayer);
         })
         .catch(() => {
-          // Do not draw straight-line fallback routes.
+          if (allRoutesSignatureRef.current !== activeSignature) return;
+
+          const fallbackLatLngs = waypoints.map((point) => [point.lat, point.lng] as [number, number]);
+          if (fallbackLatLngs.length < 2) return;
+
+          L.polyline(fallbackLatLngs, {
+            color: "#14532d",
+            weight: 8,
+            opacity: 0.16,
+            lineCap: "round",
+            lineJoin: "round",
+            dashArray: "7 7",
+          }).addTo(allRoutesLayer);
+
+          L.polyline(fallbackLatLngs, {
+            color: "#16a34a",
+            weight: 4,
+            opacity: 0.85,
+            lineCap: "round",
+            lineJoin: "round",
+            dashArray: "7 7",
+          }).addTo(allRoutesLayer);
         });
     });
 
@@ -438,7 +461,27 @@ export default function FleetMap({
       })
       .catch(() => {
         if (routingRequestRef.current !== requestId) return;
-        // Do not draw straight-line fallback routes.
+
+        const fallbackLatLngs = navWaypoints.map((point) => [point.lat, point.lng] as [number, number]);
+        if (fallbackLatLngs.length < 2) return;
+
+        L.polyline(fallbackLatLngs, {
+          color: "#14532d",
+          weight: 10,
+          opacity: 0.16,
+          lineCap: "round",
+          lineJoin: "round",
+          dashArray: "8 8",
+        }).addTo(planningLayer);
+
+        L.polyline(fallbackLatLngs, {
+          color: "#16a34a",
+          weight: 5,
+          opacity: 0.85,
+          lineCap: "round",
+          lineJoin: "round",
+          dashArray: "8 8",
+        }).addTo(planningLayer);
       });
   }, [selectedVehicleId, visibleVehicles, mapViewMode, baseCampLocation, currentLocation, destinationLocation]);
 
@@ -458,7 +501,9 @@ export default function FleetMap({
 
     visibleVehicles.forEach((vehicle) => {
       const isSelected = vehicle.id === selectedVehicleId;
-      const markerTone = vehicle.status === "Serviceable" ? "ready" : "unavailable";
+      const markerTone = vehicle.isIdle
+        ? "idle"
+        : (vehicle.hasActiveDispatch || vehicle.status === "Serviceable" ? "ready" : "unavailable");
       const icon = L.divIcon({
         className: "fleet-marker-wrapper",
         iconSize: [110, 56],
@@ -570,6 +615,15 @@ export default function FleetMap({
           background: linear-gradient(135deg, #475569, #334155);
           border-color: rgba(255, 255, 255, 0.65);
           opacity: 0.9;
+        }
+
+        .fleet-marker.idle .fleet-truck {
+          background: linear-gradient(135deg, #eab308, #facc15);
+          border-color: rgba(255, 255, 255, 0.75);
+        }
+
+        .fleet-marker.idle .material-symbols-outlined {
+          color: #333333;
         }
 
         .fleet-marker.selected .fleet-truck {

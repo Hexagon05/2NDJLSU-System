@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useTheme } from "@/lib/theme-context";
@@ -20,6 +20,7 @@ import {
   getDocs,
   doc,
   updateDoc,
+  limit,
 } from "firebase/firestore";
 import { onValue, ref as dbRef } from "firebase/database";
 import { db, rtdb } from "@/lib/firebase";
@@ -67,6 +68,8 @@ interface Vehicle {
   personnelName?: string;
   lat?: number;
   lng?: number;
+  isIdle?: boolean;
+  hasActiveDispatch?: boolean;
 }
 
 interface RoutePoint {
@@ -142,12 +145,19 @@ export default function Dashboard() {
   const [selectedVehicleRoutePoints, setSelectedVehicleRoutePoints] = useState<RoutePoint[]>([]);
   const [mapViewMode, setMapViewMode] = useState<MapViewMode>("truck");
   const [liveLocationsByDispatchId, setLiveLocationsByDispatchId] = useState<Record<string, RealtimeLocationPoint>>({});
+  const [dispatchDelayIndicators, setDispatchDelayIndicators] = useState<Record<string, string>>({});
+  const [idleVehicles, setIdleVehicles] = useState<Set<string>>(new Set());
+  const idleTrackingRef = useRef<Record<string, { anchorLat: number; anchorLng: number; lastLat: number; lastLng: number; stationarySince: number; lastSeen: number }>>({});
 
   // Base camp coordinate: 9°44'53.5"N 118°46'15.9"E
   const BASE_CAMP_COORDINATES = {
     lat: 9.748194,
     lng: 118.771083,
   };
+
+  const IDLE_AREA_THRESHOLD_SQ_METERS = 350;
+  const IDLE_DISTANCE_THRESHOLD_METERS = Math.sqrt(IDLE_AREA_THRESHOLD_SQ_METERS / Math.PI);
+  const IDLE_TIME_THRESHOLD_MS = 30000;
 
   const TERMINAL_STATUS_KEYWORDS = [
     "delivered",
@@ -169,6 +179,30 @@ export default function Dashboard() {
     if (!normalizedStatus) return false;
 
     return !TERMINAL_STATUS_KEYWORDS.some((keyword) => normalizedStatus.includes(keyword));
+  };
+
+  // Normalize dispatch status for display - convert delay-related statuses to "Ongoing"
+  const getNormalizedDisplayStatus = (status: string | undefined): string => {
+    const normalized = normalize(status);
+    if (normalized.includes("delay") || normalized.includes("late") || normalized.includes("stop over") || normalized.includes("stopover")) {
+      return "Ongoing";
+    }
+    return status || "Unknown";
+  };
+
+  // Calculate distance between two coordinates in square meters
+  const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371000; // Earth's radius in meters
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLng = ((lng2 - lng1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in meters
   };
 
   const toNumber = (value: unknown): number | null => {
@@ -352,6 +386,8 @@ export default function Dashboard() {
     const activeDispatches = dispatches.filter((entry) => isActiveDispatch(entry.status));
     if (activeDispatches.length === 0) {
       setLiveLocationsByDispatchId({});
+      setIdleVehicles(new Set());
+      idleTrackingRef.current = {};
       return;
     }
 
@@ -367,6 +403,9 @@ export default function Dashboard() {
       (snapshot) => {
         const payload = snapshot.val() as Record<string, unknown> | null;
         const nextLocations: Record<string, RealtimeLocationPoint> = {};
+        const currentTime = Date.now();
+        const newIdleVehicles = new Set<string>();
+        const nextIdleTracking = { ...idleTrackingRef.current };
 
         if (payload && typeof payload === "object") {
           Object.entries(payload).forEach(([dispatchId, entry]) => {
@@ -376,10 +415,78 @@ export default function Dashboard() {
             if (!parsed) return;
 
             nextLocations[dispatchId] = parsed;
+
+            const tracked = nextIdleTracking[dispatchId];
+            if (!tracked) {
+              nextIdleTracking[dispatchId] = {
+                anchorLat: parsed.lat,
+                anchorLng: parsed.lng,
+                lastLat: parsed.lat,
+                lastLng: parsed.lng,
+                stationarySince: currentTime,
+                lastSeen: currentTime,
+              };
+              return;
+            }
+
+            const anchorDistance = calculateDistance(
+              tracked.anchorLat,
+              tracked.anchorLng,
+              parsed.lat,
+              parsed.lng
+            );
+
+            const stepDistance = calculateDistance(
+              tracked.lastLat,
+              tracked.lastLng,
+              parsed.lat,
+              parsed.lng
+            );
+
+            if (anchorDistance > IDLE_DISTANCE_THRESHOLD_METERS) {
+              nextIdleTracking[dispatchId] = {
+                anchorLat: parsed.lat,
+                anchorLng: parsed.lng,
+                lastLat: parsed.lat,
+                lastLng: parsed.lng,
+                stationarySince: currentTime,
+                lastSeen: currentTime,
+              };
+              return;
+            }
+
+            // Any meaningful movement outside the idle radius clears idle tracking baseline.
+            if (stepDistance > IDLE_DISTANCE_THRESHOLD_METERS) {
+              nextIdleTracking[dispatchId] = {
+                anchorLat: parsed.lat,
+                anchorLng: parsed.lng,
+                lastLat: parsed.lat,
+                lastLng: parsed.lng,
+                stationarySince: currentTime,
+                lastSeen: currentTime,
+              };
+              return;
+            }
+
+            tracked.lastLat = parsed.lat;
+            tracked.lastLng = parsed.lng;
+            tracked.lastSeen = currentTime;
+            const stationaryDuration = currentTime - tracked.stationarySince;
+            if (stationaryDuration >= IDLE_TIME_THRESHOLD_MS) {
+              newIdleVehicles.add(dispatchId);
+            }
           });
         }
 
+        Object.keys(nextIdleTracking).forEach((trackedDispatchId) => {
+          if (!(trackedDispatchId in nextLocations)) {
+            delete nextIdleTracking[trackedDispatchId];
+          }
+        });
+
+        idleTrackingRef.current = nextIdleTracking;
         setLiveLocationsByDispatchId(nextLocations);
+        setIdleVehicles(newIdleVehicles);
       },
       (error) => {
         console.error("Error listening to RTDB active_locations:", error);
@@ -387,6 +494,37 @@ export default function Dashboard() {
     );
 
     return () => unsubscribe();
+  }, [user, dispatches]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const intervalId = window.setInterval(() => {
+      const now = Date.now();
+      const activeDispatches = dispatches.filter((entry) => isActiveDispatch(entry.status));
+      const activeIds = new Set<string>();
+
+      activeDispatches.forEach((entry) => {
+        if (entry.id) activeIds.add(entry.id);
+        if (entry.dispatchId) activeIds.add(entry.dispatchId);
+      });
+
+      const nextIdleVehicles = new Set<string>();
+      Object.entries(idleTrackingRef.current).forEach(([dispatchId, tracked]) => {
+        if (!activeIds.has(dispatchId)) return;
+
+        const stationaryDuration = now - tracked.stationarySince;
+        if (stationaryDuration >= IDLE_TIME_THRESHOLD_MS) {
+          nextIdleVehicles.add(dispatchId);
+        }
+      });
+
+      setIdleVehicles(nextIdleVehicles);
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [user, dispatches]);
 
   const getDispatchSortTime = (dispatch: Dispatch): number => {
@@ -491,12 +629,21 @@ export default function Dashboard() {
   const vehiclesForMap = vehicles.map((vehicle) => {
     const activeDispatch = findActiveDispatchForVehicle(vehicle);
     const liveLocation = getDispatchCurrentLocation(activeDispatch);
+    const isIdle = !!(
+      activeDispatch
+      && (
+        idleVehicles.has(activeDispatch.id)
+        || (activeDispatch.dispatchId ? idleVehicles.has(activeDispatch.dispatchId) : false)
+      )
+    );
 
     return {
       ...vehicle,
       // Vehicles with no active dispatch (including unserviceable) stay at base camp.
       lat: liveLocation?.lat ?? BASE_CAMP_COORDINATES.lat,
       lng: liveLocation?.lng ?? BASE_CAMP_COORDINATES.lng,
+      isIdle,
+      hasActiveDispatch: !!activeDispatch,
     };
   });
 
@@ -707,6 +854,62 @@ export default function Dashboard() {
     }
   }, [user, dispatchRefresh]);
 
+  const recentDispatches = dispatches.slice(0, 10);
+
+  // Check if a report entry is a delay report
+  const isDelayReport = (entry: any): boolean => {
+    const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
+    const kind = String(entry?.type || entry?.status || entry?.action || "").toLowerCase();
+    const signal = `${text} ${kind}`;
+    return signal.includes("delay") || signal.includes("late") || signal.includes("traffic") || signal.includes("break") || signal.includes("rest");
+  };
+
+  // Fetch and update delay indicators for recent dispatches
+  const updateDelayIndicators = async () => {
+    const delayMap: Record<string, string> = {};
+
+    for (const dispatch of recentDispatches) {
+      try {
+        const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
+        const snap = await getDocs(query(messagesRef, orderBy("timestamp", "desc"), limit(100)));
+
+        // Find the first (most recent) delay report
+        const delayReport = snap.docs.find((doc) => isDelayReport(doc.data()));
+
+        if (delayReport) {
+          const reportData = delayReport.data() as any;
+          const durationText = reportData?.duration || reportData?.text || reportData?.message || "";
+
+          // Extract duration from text if available, otherwise use a generic label
+          let delayLabel = "Delay";
+          if (durationText) {
+            // Try to extract duration pattern like "20 mins", "1h 30m", etc.
+            const durationMatch = durationText.match(/(\d+)\s*(h|hour|min|minute|m)/i);
+            if (durationMatch) {
+              delayLabel = `Delay ${durationMatch[0]}`;
+            } else if (durationText.length < 30) {
+              delayLabel = `Delay ${durationText}`;
+            }
+          }
+
+          delayMap[dispatch.id] = delayLabel;
+        }
+      } catch (error) {
+        // Silently continue if error fetching delay info
+        console.error(`Error fetching delay for dispatch ${dispatch.id}:`, error);
+      }
+    }
+
+    setDispatchDelayIndicators(delayMap);
+  };
+
+  // Update delay indicators when recent dispatches change
+  useEffect(() => {
+    if (recentDispatches.length > 0) {
+      updateDelayIndicators();
+    }
+  }, [recentDispatches.length, dispatches]);
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
@@ -790,8 +993,6 @@ export default function Dashboard() {
       time: getRelativeTime(d.createdAt),
     };
   });
-
-  const recentDispatches = dispatches.slice(0, 10);
 
   const canCancelDispatch = (status: string) => {
     return ["Pending", "Approved", "En Route", "Ongoing"].includes(status);
@@ -1329,9 +1530,14 @@ export default function Dashboard() {
                               #{d.dispatchId.split('-').pop()}
                             </span>
                             <div className="flex items-center gap-2">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase transition-all ${STATUS_STYLES[d.status] ?? "bg-slate-100 text-slate-600"}`}>
-                                {d.status}
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase transition-all ${STATUS_STYLES[getNormalizedDisplayStatus(d.status)] ?? "bg-slate-100 text-slate-600"}`}>
+                                {getNormalizedDisplayStatus(d.status)}
                               </span>
+                              {dispatchDelayIndicators[d.id] && (
+                                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-700 border border-amber-300">
+                                  {dispatchDelayIndicators[d.id]}
+                                </span>
+                              )}
                               {canCancelDispatch(d.status) && (
                                 <button
                                   onClick={(e) => handleCancelDispatch(d, e)}
@@ -1356,6 +1562,12 @@ export default function Dashboard() {
                             </div>
                             <span className="whitespace-nowrap opacity-60 font-mono italic">{formatTime(d.createdAt).split(',')[0]}</span>
                           </div>
+                          {dispatchDelayIndicators[d.id] && (
+                            <div className="mt-2 text-[10px] text-amber-600 font-semibold flex items-center gap-1">
+                              <span className="material-symbols-outlined" style={{ fontSize: "0.85rem" }}>schedule</span>
+                              {dispatchDelayIndicators[d.id]}
+                            </div>
+                          )}
                           <div className="mt-2 text-[10px] text-slate-500 font-semibold">
                             PO/Requisition: <span className="font-mono text-slate-700">{d.requisitionNumber || d.requisitionId || d.poNumber || "N/A"}</span>
                           </div>
