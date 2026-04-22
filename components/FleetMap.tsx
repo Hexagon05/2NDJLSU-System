@@ -43,6 +43,7 @@ interface FleetMapProps {
 const DEFAULT_CENTER: [number, number] = [9.748257, 118.771556];
 const DEFAULT_ZOOM = 9;
 const TRUCK_FOCUS_ZOOM = 16;
+const AUTO_RELOCK_MS = 30000;
 
 function isValidPoint(point?: RoutePoint | null): point is RoutePoint {
   return !!point && Number.isFinite(point.lat) && Number.isFinite(point.lng);
@@ -104,6 +105,15 @@ export default function FleetMap({
   const allRoutesSignatureRef = useRef<string>("");
   const routingRequestRef = useRef(0);
   const allRoutesRequestRef = useRef(0);
+  const truckRelockTimeoutRef = useRef<number | null>(null);
+  const latestTruckPointRef = useRef<RoutePoint | null>(null);
+
+  const clearTruckRelockTimeout = () => {
+    if (truckRelockTimeoutRef.current !== null) {
+      window.clearTimeout(truckRelockTimeoutRef.current);
+      truckRelockTimeoutRef.current = null;
+    }
+  };
 
   const visibleVehicles = useMemo(
     () => vehicles.filter((vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng)),
@@ -128,6 +138,7 @@ export default function FleetMap({
     allRoutesLayerRef.current = L.layerGroup().addTo(mapRef.current);
 
     return () => {
+      clearTruckRelockTimeout();
       mapRef.current?.remove();
       mapRef.current = null;
       layerRef.current = null;
@@ -336,6 +347,7 @@ export default function FleetMap({
     const liveTruckPoint: RoutePoint = isValidPoint(currentLocation)
       ? currentLocation
       : { lat: selectedVehicle.lat as number, lng: selectedVehicle.lng as number };
+    latestTruckPointRef.current = liveTruckPoint;
 
     const navWaypoints = mapViewMode === "destination"
       ? uniqWaypoints([baseCampLocation, liveTruckPoint, destinationLocation])
@@ -381,12 +393,40 @@ export default function FleetMap({
     if (mapViewMode === "truck") {
       const existingZoom = map.getZoom();
       const targetZoom = Math.max(existingZoom, TRUCK_FOCUS_ZOOM);
+      const isSameSelectedVehicle = lastFocusedVehicleIdRef.current === selectedVehicleId;
 
-      map.flyTo([liveTruckPoint.lat, liveTruckPoint.lng], targetZoom, {
-        animate: true,
-        duration: lastFocusedVehicleIdRef.current === selectedVehicleId ? 0.5 : 0.9,
-      });
+      if (isSameSelectedVehicle && existingZoom < TRUCK_FOCUS_ZOOM) {
+        if (truckRelockTimeoutRef.current === null) {
+          const relockVehicleId = selectedVehicleId;
+          truckRelockTimeoutRef.current = window.setTimeout(() => {
+            truckRelockTimeoutRef.current = null;
+
+            const liveMap = mapRef.current;
+            if (!liveMap) return;
+            if (mapViewMode !== "truck") return;
+            if (lastFocusedVehicleIdRef.current !== relockVehicleId) return;
+
+            const point = latestTruckPointRef.current;
+            if (!point) return;
+
+            liveMap.flyTo([point.lat, point.lng], TRUCK_FOCUS_ZOOM, {
+              animate: true,
+              duration: 0.9,
+            });
+          }, AUTO_RELOCK_MS);
+        }
+      } else {
+        clearTruckRelockTimeout();
+      }
+
+      if (!isSameSelectedVehicle || existingZoom >= TRUCK_FOCUS_ZOOM) {
+        map.flyTo([liveTruckPoint.lat, liveTruckPoint.lng], targetZoom, {
+          animate: true,
+          duration: isSameSelectedVehicle ? 0.5 : 0.9,
+        });
+      }
     } else {
+      clearTruckRelockTimeout();
       const boundsPoints = uniqWaypoints([baseCampLocation, liveTruckPoint, destinationLocation]);
       if (boundsPoints.length >= 2 && signatureChanged) {
         map.fitBounds(

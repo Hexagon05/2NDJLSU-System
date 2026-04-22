@@ -995,6 +995,9 @@ export default function Dashboard() {
         return { icon: "local_shipping", iconColor: "text-violet-500" };
       case "Ongoing":
         return { icon: "deployed_code", iconColor: "text-orange-500" };
+      case "Stop Over":
+      case "Stope Over":
+        return { icon: "pause_circle", iconColor: "text-sky-500" };
       case "Delivered":
         return { icon: "inventory_2", iconColor: "text-cyan-500" };
       case "Completed":
@@ -1002,6 +1005,10 @@ export default function Dashboard() {
       default:
         return { icon: "info", iconColor: "text-slate-500" };
     }
+  };
+
+  const getDispatchActivityTimestamp = (dispatch: Dispatch): Timestamp | null => {
+    return dispatch.UpdatedAt || dispatch.updatedAt || dispatch.createdAt || null;
   };
 
   const getRelativeTime = (timestamp: Timestamp | null): string => {
@@ -1020,15 +1027,21 @@ export default function Dashboard() {
     return date.toLocaleDateString("en-PH", { month: "short", day: "numeric" });
   };
 
-  const activities = dispatches.map((d) => {
-    const statusInfo = getStatusIcon(d.status);
-    return {
-      type: `${d.dispatchId} - ${d.status}`,
-      icon: statusInfo.icon,
-      iconColor: statusInfo.iconColor,
-      time: getRelativeTime(d.createdAt),
-    };
-  });
+  const activities = [...dispatches]
+    .sort((left, right) => {
+      const leftMs = getDispatchActivityTimestamp(left)?.toMillis?.() ?? 0;
+      const rightMs = getDispatchActivityTimestamp(right)?.toMillis?.() ?? 0;
+      return rightMs - leftMs;
+    })
+    .map((d) => {
+      const statusInfo = getStatusIcon(d.status);
+      return {
+        type: `${d.dispatchId} - ${d.status}`,
+        icon: statusInfo.icon,
+        iconColor: statusInfo.iconColor,
+        time: getRelativeTime(getDispatchActivityTimestamp(d)),
+      };
+    });
 
   const canCancelDispatch = (status: string) => {
     return ["Pending", "Approved", "En Route", "Ongoing"].includes(status);

@@ -738,6 +738,19 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 });
             }
 
+            // Keep stop-over visible in dispatch details even if message/status_reports sync is delayed.
+            const hasStopOverReport = trackedReports.some((event) => event.reportKind === "Stop Over");
+            const isStopOverStatus = normalizedStatus.includes("stop over") || normalizedStatus.includes("stopover");
+            if (isStopOverStatus && fallbackCurrentLocation && !hasStopOverReport) {
+                trackedReports.push({
+                    id: `status-fallback-${dispatch.id}-stop-over`,
+                    location: fallbackCurrentLocation,
+                    timestamp: dispatch.UpdatedAt || dispatch.updatedAt || dispatch.createdAt || null,
+                    reportText: String(dispatch.status || "Stop Over").trim(),
+                    reportKind: "Stop Over",
+                });
+            }
+
             try {
                 const emergencyReportsByDocId = await getDocs(
                     query(collection(db, "EmergencyReports"), where("dispatchId", "==", sourceDispatch.id), limit(100))
@@ -812,9 +825,21 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     useEffect(() => {
         if (authLoading || !user) return;
 
-        loadPersonnelReportLocation();
+        // Full tracking reload is expensive and remounts map content when loading toggles.
+        // Only do this when dispatch context changes.
         loadTrackingOverview();
-        // Keep tracking summary in sync with live updates from mobile side.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        authLoading,
+        user,
+        dispatch.id,
+    ]);
+
+    useEffect(() => {
+        if (authLoading || !user) return;
+
+        // Keep personnel report coordinates current with live RTDB updates.
+        loadPersonnelReportLocation();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         authLoading,
@@ -1153,14 +1178,18 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         null
     );
     const isTerminalDispatchState = ["completed", "successful dispatch", "cancelled", "delivered"].includes(normalizedDispatchStatus);
-    const isStopOverActive = latestStopOverAtMs > 0 && normalizedDispatchStatus.includes("stop over") && !isTerminalDispatchState;
+    const statusIsStopOver = normalizedDispatchStatus.includes("stop over") || normalizedDispatchStatus.includes("stopover");
+    const isStopOverActive = statusIsStopOver && !isTerminalDispatchState;
+    const stopOverStartedAtMs = latestStopOverAtMs > 0
+        ? latestStopOverAtMs
+        : (isStopOverActive ? dispatchStatusUpdatedAtMs : 0);
     const stopOverEndedAtMs = isStopOverActive
         ? tickNow
         : Math.max(dispatchStatusUpdatedAtMs, latestMovementAfterStopMs);
-    const stopOverTrackedMinutes = latestStopOverAtMs > 0
-        ? Math.max(0, (Math.max(stopOverEndedAtMs, latestStopOverAtMs) - latestStopOverAtMs) / 60000)
+    const stopOverTrackedMinutes = stopOverStartedAtMs > 0
+        ? Math.max(0, (Math.max(stopOverEndedAtMs, stopOverStartedAtMs) - stopOverStartedAtMs) / 60000)
         : 0;
-    const stopOverEndedAtLabel = !isStopOverActive && stopOverEndedAtMs > latestStopOverAtMs
+    const stopOverEndedAtLabel = !isStopOverActive && stopOverStartedAtMs > 0 && stopOverEndedAtMs > stopOverStartedAtMs
         ? formatTime(
             sourceDispatch.UpdatedAt ||
             sourceDispatch.updatedAt ||
@@ -1171,9 +1200,19 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         )
         : null;
 
+    const stopOverMonitorEvent = latestStopOverEvent || (isStopOverActive
+        ? {
+            id: `stop-over-monitor-${sourceDispatch.id}`,
+            location: liveRtdbLocation || sourceDispatch.CurrentLocation || sourceDispatch.currentLocation || sourceDispatch.location || { lat: 0, lng: 0 },
+            timestamp: sourceDispatch.UpdatedAt || sourceDispatch.updatedAt || sourceDispatch.createdAt || null,
+            reportText: String(sourceDispatch.status || "Stop Over").trim(),
+            reportKind: "Stop Over",
+        }
+        : null);
+
     const effectiveDispatchStatus = isStopOverActive
         ? "Stop Over"
-        : (normalizedDispatchStatus.includes("delay") || normalizedDispatchStatus.includes("stop over") || normalizedDispatchStatus.includes("stopover"))
+        : (normalizedDispatchStatus.includes("delay") || normalizedDispatchStatus.includes("late"))
             ? "Ongoing"
             : sourceDispatch.status;
 
@@ -1604,7 +1643,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             </div>
                         )}
 
-                        {latestStopOverEvent && (
+                        {stopOverMonitorEvent && (
                             <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 flex items-center justify-between gap-3">
                                 <div>
                                     <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700">Stop Over Monitor</p>
@@ -1612,7 +1651,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         {isStopOverActive ? "Currently on Stop Over" : "Latest Stop Over Session"}
                                     </p>
                                     <p className="text-xs text-sky-700/80">
-                                        Duration tracked: {formatDurationMinutes(stopOverTrackedMinutes)} • Start {formatTime(latestStopOverEvent.timestamp)}
+                                        Duration tracked: {formatDurationMinutes(stopOverTrackedMinutes)} • Start {formatTime(stopOverMonitorEvent.timestamp)}
                                     </p>
                                     {!isStopOverActive && stopOverEndedAtLabel && (
                                         <p className="text-xs text-sky-700/70">
@@ -1718,7 +1757,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                     <p className="text-sm font-bold text-slate-800">
                                         {stopOverCount > 0 ? formatDurationMinutes(stopOverTrackedMinutes) : "No stop over recorded"}
                                     </p>
-                                    {latestStopOverEvent && (
+                                    {stopOverMonitorEvent && (
                                         <p className="text-[11px] text-slate-500">
                                             {isStopOverActive ? "Active and counting" : "Ended when dispatch resumed"}
                                         </p>

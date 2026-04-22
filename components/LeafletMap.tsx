@@ -10,11 +10,49 @@ interface LeafletMapProps {
     onChange?: (lat: number, lng: number) => void;
 }
 
+const MIN_FOCUS_ZOOM = 13;
+const AUTO_RELOCK_MS = 30000;
+
 export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const resizeObserverRef = useRef<ResizeObserver | null>(null);
+    const relockTimeoutRef = useRef<number | null>(null);
+    const latestPointRef = useRef<{ lat: number; lng: number }>({ lat, lng });
+
+    const clearRelockTimeout = () => {
+        if (relockTimeoutRef.current !== null) {
+            window.clearTimeout(relockTimeoutRef.current);
+            relockTimeoutRef.current = null;
+        }
+    };
+
+    const scheduleRelockIfZoomedOut = () => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        if (map.getZoom() >= MIN_FOCUS_ZOOM) {
+            clearRelockTimeout();
+            return;
+        }
+
+        if (relockTimeoutRef.current !== null) return;
+
+        relockTimeoutRef.current = window.setTimeout(() => {
+            relockTimeoutRef.current = null;
+
+            const liveMap = mapRef.current;
+            if (!liveMap) return;
+            if (liveMap.getZoom() >= MIN_FOCUS_ZOOM) return;
+
+            const point = latestPointRef.current;
+            liveMap.flyTo([point.lat, point.lng], MIN_FOCUS_ZOOM, {
+                animate: true,
+                duration: 0.8,
+            });
+        }, AUTO_RELOCK_MS);
+    };
 
     const buildPinIcon = () => L.divIcon({
         className: "custom-div-icon",
@@ -56,6 +94,10 @@ export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
                 onChange?.(lat, lng);
             });
 
+            mapRef.current.on("zoomend", () => {
+                scheduleRelockIfZoomedOut();
+            });
+
             // Fix tile/layout glitches when map appears inside animated/modaled containers.
             requestAnimationFrame(() => mapRef.current?.invalidateSize());
             setTimeout(() => mapRef.current?.invalidateSize(), 120);
@@ -68,6 +110,8 @@ export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
             }
         }
 
+        latestPointRef.current = { lat, lng };
+
         // Update or create marker
         if (markerRef.current) {
             markerRef.current.setLatLng([lat, lng]);
@@ -77,6 +121,7 @@ export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
 
         // Pan/fly map to new marker position so the selected point stays centered.
         if (mapRef.current) {
+            clearRelockTimeout();
             mapRef.current.flyTo([lat, lng], Math.max(mapRef.current.getZoom(), 13), {
                 animate: true,
                 duration: 0.6,
@@ -87,6 +132,7 @@ export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
 
     useEffect(() => {
         return () => {
+            clearRelockTimeout();
             resizeObserverRef.current?.disconnect();
             resizeObserverRef.current = null;
             mapRef.current?.remove();
