@@ -45,6 +45,9 @@ interface Dispatch {
     location?: { lat: number; lng: number; label: string };
     startLocation?: { lat: number; lng: number; label: string };
     deliveryLocation?: { lat: number; lng: number; label: string };
+    isParked?: boolean;
+    parkedAt?: Timestamp | null;
+    parkedBy?: string | null;
     supplies: { category: string; item: string; quantity: number }[];
     othersNote?: string;
     proofOfDelivery?: unknown;
@@ -306,6 +309,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [completing, setCompleting] = useState(false);
     const [canceling, setCanceling] = useState(false);
     const [confirmingDelivery, setConfirmingDelivery] = useState(false);
+    const [markingParked, setMarkingParked] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [successTitle, setSuccessTitle] = useState("Delivery Marked as Completed Successfully!");
     const [successMessage, setSuccessMessage] = useState("The dispatch has been updated and will now appear in the history records.");
@@ -319,6 +323,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [loadingReportLocation, setLoadingReportLocation] = useState(false);
     const [trackingEvents, setTrackingEvents] = useState<DispatchTrackingPoint[]>([]);
     const [movementPoints, setMovementPoints] = useState<DispatchTrackingPoint[]>([]);
+    const [stopOverCount, setStopOverCount] = useState(0);
     const [liveRtdbLocation, setLiveRtdbLocation] = useState<RealtimeLocationPoint | null>(null);
     const [loadingTrackingOverview, setLoadingTrackingOverview] = useState(false);
     const [selectedReportCategory, setSelectedReportCategory] = useState<"all" | "delay" | "stop-over" | "emergency" | "confirm-delivery">("all");
@@ -650,6 +655,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         if (!dispatch.id) {
             setTrackingEvents([]);
             setMovementPoints([]);
+            setStopOverCount(0);
             return;
         }
 
@@ -657,6 +663,13 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         try {
             const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
             const snap = await getDocs(query(messagesRef, orderBy("timestamp", "asc"), limit(250)));
+            const statusReportsRef = collection(db, "dispatches", dispatch.id, "status_reports");
+            const statusReportsSnap = await getDocs(query(statusReportsRef, orderBy("timestamp", "asc"), limit(250)));
+            const stopOverSessionCount = statusReportsSnap.docs.filter((reportDoc) => {
+                const entry = reportDoc.data() as any;
+                const reportType = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
+                return reportType.includes("stop over") || reportType.includes("stopover") || reportType.includes("stop-over");
+            }).length;
 
             const movement: DispatchTrackingPoint[] = [];
             const trackedReports: DispatchTrackingPoint[] = [];
@@ -683,17 +696,37 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 }
             });
 
+            statusReportsSnap.docs.forEach((reportDoc, index) => {
+                const entry = reportDoc.data() as any;
+                const reportType = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
+                if (!reportType.includes("stop over") && !reportType.includes("stopover") && !reportType.includes("stop-over")) {
+                    return;
+                }
+
+                const location = extractCoordinates(entry) || liveRtdbLocation || null;
+                if (!location) return;
+
+                const reportText = String(entry?.reason || entry?.text || entry?.message || entry?.statusNote || "").trim();
+                const point: DispatchTrackingPoint = {
+                    id: `sr-${reportDoc.id}-${index}`,
+                    location,
+                    timestamp: (entry?.timestamp as Timestamp) || null,
+                    reportText,
+                    reportKind: "Stop Over",
+                };
+
+                trackedReports.push(point);
+            });
+
             const fallbackCurrentLocation = liveRtdbLocation || null;
 
             const normalizedStatus = String(dispatch.status || "").toLowerCase();
             const statusKind =
-                normalizedStatus.includes("stop over") || normalizedStatus.includes("stopover")
-                    ? "Stop Over"
-                    : normalizedStatus.includes("delay") || normalizedStatus.includes("late")
-                        ? "Delay"
-                        : normalizedStatus.includes("emergency")
-                            ? "Emergency"
-                            : null;
+                normalizedStatus.includes("delay") || normalizedStatus.includes("late")
+                    ? "Delay"
+                    : normalizedStatus.includes("emergency")
+                        ? "Emergency"
+                        : null;
 
             if (statusKind && fallbackCurrentLocation) {
                 trackedReports.push({
@@ -765,10 +798,12 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
             setMovementPoints(movement);
             setTrackingEvents(dedupedTrackedReports);
+            setStopOverCount(stopOverSessionCount || dedupedTrackedReports.filter((event) => event.reportKind === "Stop Over").length);
         } catch (error) {
             console.error("Error loading tracking overview:", error);
             setMovementPoints([]);
             setTrackingEvents([]);
+            setStopOverCount(0);
         } finally {
             setLoadingTrackingOverview(false);
         }
@@ -836,6 +871,9 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 status: "Successful Dispatch",
                 successfulDispatchAt: Timestamp.now(),
                 deliveryProofCount: proofImages.length,
+                isParked: false,
+                parkedAt: null,
+                parkedBy: null,
             });
 
             setShowProofModal(false);
@@ -848,6 +886,30 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             alert(`Failed to confirm delivery: ${error?.message || "Unknown error"}`);
         } finally {
             setConfirmingDelivery(false);
+        }
+    };
+
+    const handleMarkAsParked = async () => {
+        if (!dispatch.id) return;
+
+        setMarkingParked(true);
+        try {
+            const dispatchRef = doc(db, "dispatches", dispatch.id);
+            await updateDoc(dispatchRef, {
+                isParked: true,
+                parkedAt: Timestamp.now(),
+                parkedBy: user?.uid || null,
+            });
+
+            setSuccessTitle("Vehicle Marked as Parked");
+            setSuccessMessage("Status remains Successful Dispatch, but this vehicle is now inactive for tracking.");
+            setShowSuccessModal(true);
+            onSuccess?.();
+        } catch (error: any) {
+            console.error("Error marking dispatch as parked:", error);
+            alert(`Failed to mark as parked: ${error?.message || "Unknown error"}`);
+        } finally {
+            setMarkingParked(false);
         }
     };
 
@@ -1140,9 +1202,19 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const canComplete = ["En Route", "Ongoing", "Approved", "Stop Over"].includes(effectiveDispatchStatus);
     const canConfirmDelivery = sourceDispatch.status === "Delivered";
     const canViewProof = sourceDispatch.status === "Successful Dispatch";
+    const isParked = sourceDispatch.isParked === true;
+    const canMarkAsParked = ["Successful Dispatch", "Delivered"].includes(sourceDispatch.status) && !isParked;
     const canCancel = ["Pending", "Approved", "En Route", "Ongoing", "Stop Over"].includes(effectiveDispatchStatus);
     const deliveryLocation = sourceDispatch.deliveryLocation || sourceDispatch.location;
-    const currentOperationalLocation = liveRtdbLocation || deliveryLocation;
+    const baseCampLocation = sourceDispatch.startLocation || {
+        lat: 9.748194,
+        lng: 118.771083,
+        label: "Base Camp",
+    };
+    const dispatchCurrentLocation = sourceDispatch.CurrentLocation || sourceDispatch.currentLocation || null;
+    const currentOperationalLocation = isParked
+        ? baseCampLocation
+        : liveRtdbLocation || dispatchCurrentLocation || null;
     const destinationCoordinates = {
         lat: deliveryLocation?.lat ?? 0,
         lng: deliveryLocation?.lng ?? 0,
@@ -1151,11 +1223,14 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         lat: currentOperationalLocation?.lat ?? 0,
         lng: currentOperationalLocation?.lng ?? 0,
     };
-    const baseCampLocation = sourceDispatch.startLocation || {
-        lat: 9.748194,
-        lng: 118.771083,
-        label: "Base Camp",
-    };
+    const currentLocationLabel = isParked
+        ? "Base Camp"
+        : (sourceDispatch.CurrentLocation as { label?: string } | undefined)?.label
+            || (sourceDispatch.currentLocation as { label?: string } | undefined)?.label
+            || ((currentOperationalLocation && "label" in currentOperationalLocation)
+                ? currentOperationalLocation.label
+                : undefined)
+            || "Coordinate point established";
     const dispatchUpdatedAt =
         sourceDispatch.updatedAt
         || sourceDispatch.UpdatedAt
@@ -1404,7 +1479,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                 <div className="rounded-2xl bg-emerald-50/70 border border-emerald-100 p-4">
                                     <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600 mb-1">Label</p>
                                     <p className="text-sm font-bold text-slate-800">
-                                        {currentOperationalLocation?.label || "Coordinate point established"}
+                                        {currentLocationLabel}
                                     </p>
                                 </div>
 
@@ -1602,7 +1677,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                         className={`rounded-2xl border p-3 text-left transition ${selectedReportCategory === "stop-over" ? "border-sky-400 bg-sky-100/80 shadow-sm" : "border-sky-200 bg-sky-50/70 hover:border-sky-300"}`}
                                     >
                                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-sky-700">Stop Over Reports</p>
-                                        <p className="text-xl font-black text-sky-900">{stopOverSummary.total}</p>
+                                        <p className="text-xl font-black text-sky-900">{stopOverCount}</p>
                                         <p className="text-[11px] text-sky-800/80">Coordinates: {stopOverSummary.coordinates}</p>
                                         <p className="text-[11px] text-sky-800/80">Time: {stopOverSummary.timestamp}</p>
                                         <p className="text-[11px] text-sky-800/80 truncate">Reason: {stopOverSummary.reason}</p>
@@ -1641,7 +1716,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
                                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Stop Over Timer</p>
                                     <p className="text-sm font-bold text-slate-800">
-                                        {latestStopOverEvent ? formatDurationMinutes(stopOverTrackedMinutes) : "No stop over recorded"}
+                                        {stopOverCount > 0 ? formatDurationMinutes(stopOverTrackedMinutes) : "No stop over recorded"}
                                     </p>
                                     {latestStopOverEvent && (
                                         <p className="text-[11px] text-slate-500">
@@ -1757,6 +1832,12 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                 <span className="text-xs font-bold text-emerald-700">Successful Dispatch</span>
                             </div>
                         )}
+                        {isParked && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border border-slate-300 rounded-xl">
+                                <span className="material-symbols-outlined text-slate-600 text-sm">local_parking</span>
+                                <span className="text-xs font-bold text-slate-700">Parked</span>
+                            </div>
+                        )}
                     </div>
                     <div className="flex gap-3">
                         <button
@@ -1827,6 +1908,25 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             >
                                 <span className="material-symbols-outlined text-sm">image</span>
                                 View Proof
+                            </button>
+                        )}
+                        {canMarkAsParked && (
+                            <button
+                                onClick={handleMarkAsParked}
+                                disabled={markingParked}
+                                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-slate-500 to-slate-700 text-white font-bold text-sm shadow-lg hover:from-slate-600 hover:to-slate-800 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {markingParked ? (
+                                    <>
+                                        <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                                        Marking...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="material-symbols-outlined text-sm">local_parking</span>
+                                        Mark as Parked
+                                    </>
+                                )}
                             </button>
                         )}
                         <button

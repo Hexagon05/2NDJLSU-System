@@ -55,6 +55,8 @@ interface Dispatch {
   location?: { lat: number; lng: number; label: string };
   startLocation?: { lat: number; lng: number; label: string };
   deliveryLocation?: { lat: number; lng: number; label: string };
+  isParked?: boolean;
+  parkedAt?: Timestamp | null;
   supplies: { category: string; item: string; quantity: number }[];
   createdAt: Timestamp | null;
 }
@@ -160,26 +162,17 @@ export default function Dashboard() {
   const IDLE_DISTANCE_THRESHOLD_METERS = Math.sqrt(IDLE_AREA_THRESHOLD_SQ_METERS / Math.PI);
   const IDLE_TIME_THRESHOLD_MS = 30000;
 
-  const TERMINAL_STATUS_KEYWORDS = [
-    "delivered",
-    "completed",
-    "successful dispatch",
-    "cancelled",
-    "canceled",
-    "finish",
-  ];
-
   const normalize = (value: string | undefined | null): string =>
     String(value || "").trim().toLowerCase();
 
   const compactNormalize = (value: string | undefined | null): string =>
     normalize(value).replace(/[^a-z0-9]+/g, "");
 
-  const isActiveDispatch = (status: string | undefined): boolean => {
-    const normalizedStatus = normalize(status).replace(/[_-]+/g, " ");
-    if (!normalizedStatus) return false;
+  const isTrackedDispatch = (dispatch: Dispatch | null | undefined): boolean => {
+    if (!dispatch || dispatch.isParked === true) return false;
 
-    return !TERMINAL_STATUS_KEYWORDS.some((keyword) => normalizedStatus.includes(keyword));
+    // Status no longer controls live tracking; parked flag is the single lock.
+    return Boolean(dispatch.id || dispatch.dispatchId);
   };
 
   // Normalize dispatch status for display - convert delay-related statuses to "Ongoing"
@@ -326,6 +319,16 @@ export default function Dashboard() {
       };
     }
 
+    const fallbackSource = dispatch.CurrentLocation || dispatch.currentLocation || dispatch.location;
+    const fallbackLat = toNumber(fallbackSource?.lat);
+    const fallbackLng = toNumber(fallbackSource?.lng);
+    if (fallbackLat !== null && fallbackLng !== null) {
+      return {
+        lat: fallbackLat,
+        lng: fallbackLng,
+      };
+    }
+
     return null;
   };
 
@@ -388,8 +391,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user) return;
 
-    const activeDispatches = dispatches.filter((entry) => isActiveDispatch(entry.status));
-    if (activeDispatches.length === 0) {
+    const trackedDispatches = dispatches.filter((entry) => isTrackedDispatch(entry));
+    if (trackedDispatches.length === 0) {
       setLiveLocationsByDispatchId({});
       setIdleVehicles(new Set());
       idleTrackingRef.current = {};
@@ -397,7 +400,7 @@ export default function Dashboard() {
     }
 
     const activeLocationKeys = Array.from(
-      new Set(activeDispatches.flatMap((entry) => getActiveDispatchLocationKeys(entry)))
+      new Set(trackedDispatches.flatMap((entry) => getActiveDispatchLocationKeys(entry)))
     );
     const activeKeySet = new Set(activeLocationKeys);
 
@@ -424,8 +427,6 @@ export default function Dashboard() {
         const next = { ...previous };
         if (parsed) {
           next[dispatchId] = parsed;
-        } else {
-          delete next[dispatchId];
         }
         return next;
       });
@@ -526,7 +527,7 @@ export default function Dashboard() {
 
     const intervalId = window.setInterval(() => {
       const now = Date.now();
-      const activeDispatches = dispatches.filter((entry) => isActiveDispatch(entry.status));
+      const activeDispatches = dispatches.filter((entry) => isTrackedDispatch(entry));
       const activeIds = new Set<string>();
 
       activeDispatches.forEach((entry) => {
@@ -602,11 +603,13 @@ export default function Dashboard() {
     const assignedVehicleIds = new Set<string>();
 
     const trackingDispatches = dispatches
-      .filter((dispatch) => {
-        const normalizedStatus = normalize(dispatch.status);
-        return isActiveDispatch(dispatch.status) || normalizedStatus.includes("successful dispatch");
-      })
-      .sort((a, b) => getDispatchSortTime(b) - getDispatchSortTime(a));
+      .filter((dispatch) => isTrackedDispatch(dispatch))
+      .sort((a, b) => {
+        const aHasLive = getDispatchCurrentLocation(a) ? 1 : 0;
+        const bHasLive = getDispatchCurrentLocation(b) ? 1 : 0;
+        if (aHasLive !== bHasLive) return bHasLive - aHasLive;
+        return getDispatchSortTime(b) - getDispatchSortTime(a);
+      });
 
     trackingDispatches.forEach((dispatch) => {
       let bestVehicleId: string | null = null;
@@ -648,7 +651,8 @@ export default function Dashboard() {
     }
 
     if (vehicleFilter === "active-dispatch") {
-      return findActiveDispatchForVehicle(vehicle) !== null;
+      const dispatch = findActiveDispatchForVehicle(vehicle);
+      return !!dispatch && !!getDispatchCurrentLocation(dispatch);
     }
 
     return true;
@@ -674,13 +678,13 @@ export default function Dashboard() {
       lat: liveLocation?.lat ?? BASE_CAMP_COORDINATES.lat,
       lng: liveLocation?.lng ?? BASE_CAMP_COORDINATES.lng,
       isIdle,
-      hasActiveDispatch: !!activeDispatch,
+      hasActiveDispatch: !!activeDispatch && !!liveLocation,
       isReturningToCamp,
     };
   });
 
   const selectedVehicleData = vehiclesForMap.find((vehicle) => vehicle.id === selectedVehicle) || null;
-  const activeDispatchCount = dispatches.filter((dispatch) => isActiveDispatch(dispatch.status)).length;
+  const activeDispatchCount = dispatches.filter((dispatch) => isTrackedDispatch(dispatch) && !!getDispatchCurrentLocation(dispatch)).length;
   const selectedCurrentLocation = getDispatchCurrentLocation(selectedVehicleDispatch);
   const selectedDestinationLocation = (() => {
     const point = selectedVehicleDispatch?.deliveryLocation || selectedVehicleDispatch?.location;
@@ -695,7 +699,7 @@ export default function Dashboard() {
   const allActiveRoutePlans: ActiveRoutePlan[] = vehiclesForMap
     .map((vehicle) => {
       const activeDispatch = findActiveDispatchForVehicle(vehicle);
-      if (!activeDispatch || !isActiveDispatch(activeDispatch.status)) return null;
+      if (!activeDispatch || !isTrackedDispatch(activeDispatch)) return null;
 
       const currentLocation = getDispatchCurrentLocation(activeDispatch)
         || (Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng)
