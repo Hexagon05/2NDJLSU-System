@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
-import { arrayUnion, collection, doc, onSnapshot, orderBy, query, Timestamp, updateDoc } from "firebase/firestore";
+import { addDoc, collection, doc, onSnapshot, orderBy, query, Timestamp, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { MODAL_LOCK_EVENT, getModalLockCount, isAnyAppModalOpen } from "@/lib/modal-lock";
@@ -40,12 +40,19 @@ function sortMessages(messages: ChatMessage[] = []): ChatMessage[] {
   });
 }
 
-function getUnreadPersonnelMessageCount(thread: DispatchChatThread, lastSeenAtMs: number): number {
-  return sortMessages(thread.dispatchChat ?? []).reduce((count, message) => {
+function getUnreadPersonnelMessageCount(messages: ChatMessage[] = [], lastSeenAtMs: number): number {
+  return sortMessages(messages).reduce((count, message) => {
     const messageMs = message.timestamp?.toMillis?.() ?? 0;
     if (message.isAdmin === true || messageMs <= lastSeenAtMs) {
       return count;
     }
+    return count + 1;
+  }, 0);
+}
+
+function getPersonnelMessageCount(messages: ChatMessage[] = []): number {
+  return sortMessages(messages).reduce((count, message) => {
+    if (message.isAdmin === true) return count;
     return count + 1;
   }, 0);
 }
@@ -57,6 +64,15 @@ function getLatestPersonnelMessageMs(messages: ChatMessage[] = []): number {
   }, 0);
 }
 
+function getThreadMessages(
+  threadId: string | null | undefined,
+  threadMessagesById: Record<string, ChatMessage[]>,
+  fallbackMessages: ChatMessage[] = []
+): ChatMessage[] {
+  if (!threadId) return sortMessages(fallbackMessages);
+  return sortMessages(threadMessagesById[threadId] ?? fallbackMessages);
+}
+
 export default function DispatchChatHub() {
   const pathname = usePathname();
   const { user } = useAuth();
@@ -64,10 +80,12 @@ export default function DispatchChatHub() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null);
   const [threads, setThreads] = useState<DispatchChatThread[]>([]);
+  const [threadMessagesById, setThreadMessagesById] = useState<Record<string, ChatMessage[]>>({});
   const [messageInput, setMessageInput] = useState("");
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const messageUnsubscribersRef = useRef<Record<string, () => void>>({});
   const [isMounted, setIsMounted] = useState(false);
   const [restoredState, setRestoredState] = useState(false);
   const [threadsLoaded, setThreadsLoaded] = useState(false);
@@ -90,6 +108,59 @@ export default function DispatchChatHub() {
 
     return () => unsubscribe();
   }, [user, hideOnRoutes]);
+
+  useEffect(() => {
+    if (!user || hideOnRoutes) {
+      Object.values(messageUnsubscribersRef.current).forEach((unsubscribe) => unsubscribe());
+      messageUnsubscribersRef.current = {};
+      setThreadMessagesById({});
+      return;
+    }
+
+    const activeThreadIds = new Set(threads.map((thread) => thread.id));
+
+    Object.entries(messageUnsubscribersRef.current).forEach(([threadId, unsubscribe]) => {
+      if (activeThreadIds.has(threadId)) return;
+      unsubscribe();
+      delete messageUnsubscribersRef.current[threadId];
+      setThreadMessagesById((prev) => {
+        if (!(threadId in prev)) return prev;
+        const next = { ...prev };
+        delete next[threadId];
+        return next;
+      });
+    });
+
+    threads.forEach((thread) => {
+      if (messageUnsubscribersRef.current[thread.id]) return;
+
+      const messagesRef = collection(db, "dispatches", thread.id, "messages");
+      const messagesQuery = query(messagesRef, orderBy("timestamp", "asc"));
+
+      const unsubscribe = onSnapshot(
+        messagesQuery,
+        (snapshot) => {
+          const loadedMessages = snapshot.docs.map((chatDoc) => chatDoc.data() as ChatMessage);
+          setThreadMessagesById((prev) => ({
+            ...prev,
+            [thread.id]: loadedMessages,
+          }));
+        },
+        (error) => {
+          console.error(`Error listening to dispatch messages for ${thread.id}:`, error);
+        }
+      );
+
+      messageUnsubscribersRef.current[thread.id] = unsubscribe;
+    });
+  }, [user, hideOnRoutes, threads]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(messageUnsubscribersRef.current).forEach((unsubscribe) => unsubscribe());
+      messageUnsubscribersRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     setIsMounted(true);
@@ -183,21 +254,41 @@ export default function DispatchChatHub() {
     });
   };
 
+  const activeThread = useMemo(
+    () => threads.find((thread) => thread.id === activeDispatchId) ?? null,
+    [threads, activeDispatchId]
+  );
+
+  const activeMessages = useMemo(
+    () => getThreadMessages(activeThread?.id, threadMessagesById, activeThread?.dispatchChat ?? []),
+    [activeThread?.id, activeThread?.dispatchChat, threadMessagesById]
+  );
+
+  const visibleThreads = useMemo(
+    () => threads.filter((thread) => getPersonnelMessageCount(threadMessagesById[thread.id] ?? thread.dispatchChat ?? []) > 0),
+    [threads, threadMessagesById]
+  );
+
   useEffect(() => {
     if (!threadsLoaded || !restoredState) {
       setUnreadThreadCount(0);
       return;
     }
 
-    const unreadCount = threads.reduce((count, thread) => {
+    const unreadCount = visibleThreads.reduce((count, thread) => {
+      if (thread.id === activeDispatchId) {
+        return count;
+      }
+
+      const threadMessages = threadMessagesById[thread.id] ?? thread.dispatchChat ?? [];
       const seenAtForThread = threadSeenAtById[thread.id] ?? 0;
-      const hasUnreadFromPersonnel = getUnreadPersonnelMessageCount(thread, seenAtForThread) > 0;
+      const hasUnreadFromPersonnel = getUnreadPersonnelMessageCount(threadMessages, seenAtForThread) > 0;
 
       return count + (hasUnreadFromPersonnel ? 1 : 0);
     }, 0);
 
     setUnreadThreadCount(unreadCount);
-  }, [threads, threadsLoaded, restoredState, threadSeenAtById]);
+  }, [visibleThreads, threadsLoaded, restoredState, threadSeenAtById, threadMessagesById, activeDispatchId]);
 
   useEffect(() => {
     if (isBlockedByModal) {
@@ -217,13 +308,13 @@ export default function DispatchChatHub() {
 
       const thread = threads.find((entry) => entry.id === incomingDispatchId);
       if (thread) {
-        markThreadAsSeen(thread.id, thread.dispatchChat ?? []);
+        markThreadAsSeen(thread.id, threadMessagesById[thread.id] ?? thread.dispatchChat ?? []);
       }
     };
 
     window.addEventListener("open-dispatch-chat", handleOpenChat as EventListener);
     return () => window.removeEventListener("open-dispatch-chat", handleOpenChat as EventListener);
-  }, [threads]);
+  }, [threads, threadMessagesById]);
 
   useEffect(() => {
     if (!activeDispatchId) return;
@@ -267,17 +358,10 @@ export default function DispatchChatHub() {
     };
   }, [panelOpen]);
 
-  const activeThread = useMemo(
-    () => threads.find((thread) => thread.id === activeDispatchId) ?? null,
-    [threads, activeDispatchId]
-  );
-
-  const activeMessages = useMemo(() => sortMessages(activeThread?.dispatchChat ?? []), [activeThread]);
-
   useEffect(() => {
     if (!activeThread?.id) return;
-    markThreadAsSeen(activeThread.id, activeThread.dispatchChat ?? []);
-  }, [activeThread?.id, activeThread?.dispatchChat]);
+    markThreadAsSeen(activeThread.id, threadMessagesById[activeThread.id] ?? activeThread.dispatchChat ?? []);
+  }, [activeThread?.id, activeThread?.dispatchChat, threadMessagesById]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -297,10 +381,12 @@ export default function DispatchChatHub() {
         isAdmin: true,
       };
 
-      await updateDoc(doc(db, "dispatches", activeThread.id), {
-        dispatchChat: arrayUnion(chatMessage),
-        lastChatAt: Timestamp.now(),
-      });
+      await Promise.all([
+        addDoc(collection(db, "dispatches", activeThread.id, "messages"), chatMessage),
+        updateDoc(doc(db, "dispatches", activeThread.id), {
+          lastChatAt: Timestamp.now(),
+        }),
+      ]);
 
       setMessageInput("");
     } catch (error: any) {
@@ -331,18 +417,21 @@ export default function DispatchChatHub() {
               <div className="max-h-96 overflow-y-auto">
                 {threads.length === 0 ? (
                   <p className="px-4 py-8 text-center text-sm text-slate-500">No dispatches available.</p>
+                ) : visibleThreads.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-sm text-slate-500">No dispatch chats with personnel messages yet.</p>
                 ) : (
-                  threads.map((thread) => {
-                    const lastMessage = sortMessages(thread.dispatchChat ?? []).slice(-1)[0];
+                  visibleThreads.map((thread) => {
+                    const threadMessages = threadMessagesById[thread.id] ?? thread.dispatchChat ?? [];
+                    const lastMessage = getThreadMessages(thread.id, threadMessagesById, thread.dispatchChat ?? []).slice(-1)[0];
                     const isActive = thread.id === activeDispatchId;
-                    const unreadCount = getUnreadPersonnelMessageCount(thread, threadSeenAtById[thread.id] ?? 0);
-                    const hasUnread = unreadCount > 0;
+                    const unreadCount = getUnreadPersonnelMessageCount(threadMessages, threadSeenAtById[thread.id] ?? 0);
+                    const hasUnread = !isActive && unreadCount > 0;
                     return (
                       <button
                         key={thread.id}
                         onClick={() => {
                           setActiveDispatchId(thread.id);
-                          markThreadAsSeen(thread.id, thread.dispatchChat ?? []);
+                          markThreadAsSeen(thread.id, threadMessages);
                         }}
                         className={`w-full border-b border-slate-100 px-4 py-3 text-left transition-colors ${isActive ? "bg-blue-50" : hasUnread ? "bg-emerald-50/50 hover:bg-emerald-50" : "hover:bg-slate-50"}`}
                       >

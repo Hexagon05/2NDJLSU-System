@@ -70,6 +70,7 @@ interface Vehicle {
   lng?: number;
   isIdle?: boolean;
   hasActiveDispatch?: boolean;
+  isReturningToCamp?: boolean;
 }
 
 interface RoutePoint {
@@ -600,11 +601,14 @@ export default function Dashboard() {
     const mapping = new Map<string, Dispatch>();
     const assignedVehicleIds = new Set<string>();
 
-    const activeDispatches = dispatches
-      .filter((dispatch) => isActiveDispatch(dispatch.status))
+    const trackingDispatches = dispatches
+      .filter((dispatch) => {
+        const normalizedStatus = normalize(dispatch.status);
+        return isActiveDispatch(dispatch.status) || normalizedStatus.includes("successful dispatch");
+      })
       .sort((a, b) => getDispatchSortTime(b) - getDispatchSortTime(a));
 
-    activeDispatches.forEach((dispatch) => {
+    trackingDispatches.forEach((dispatch) => {
       let bestVehicleId: string | null = null;
       let bestScore = -1;
 
@@ -653,6 +657,9 @@ export default function Dashboard() {
   const vehiclesForMap = vehicles.map((vehicle) => {
     const activeDispatch = findActiveDispatchForVehicle(vehicle);
     const liveLocation = getDispatchCurrentLocation(activeDispatch);
+    const isReturningToCamp = activeDispatch
+      ? normalize(activeDispatch.status).includes("successful dispatch")
+      : false;
     const isIdle = !!(
       activeDispatch
       && (
@@ -668,6 +675,7 @@ export default function Dashboard() {
       lng: liveLocation?.lng ?? BASE_CAMP_COORDINATES.lng,
       isIdle,
       hasActiveDispatch: !!activeDispatch,
+      isReturningToCamp,
     };
   });
 
@@ -854,7 +862,7 @@ export default function Dashboard() {
           
           if (status === "Pending" || status === "Approved" || status === "En Route" || status === "Ongoing") {
             ongoingDeliveries++;
-          } else if (status === "Delivered" || status === "Completed") {
+          } else if (status === "Successful Dispatch" || status === "Completed") {
             completedDispatches++;
           }
         });

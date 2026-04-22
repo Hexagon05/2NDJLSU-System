@@ -895,7 +895,72 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
     const handleExportDispatch = async () => {
         try {
-            const itemClassLookup = await getItemClassLookup();
+            // Fetch items and supply_classes from database
+            const itemsSnap = await getDocs(collection(db, "items"));
+            const itemsDatabase: any[] = itemsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            const classesSnap = await getDocs(collection(db, "supply_classes"));
+            const supplyClassesMap = new Map<string, string>();
+            classesSnap.forEach(doc => {
+                const data = doc.data() as any;
+                const classCode = data?.categories?.code || doc.id;
+                const className = data?.categories?.name || doc.id;
+                supplyClassesMap.set(classCode, className);
+            });
+            
+            // Function to find item class by matching supply item name to items collection
+            const findItemClassAndCode = (supplyItemName: string): { className: string; itemCode: string } => {
+                const normalizedSupplyItem = supplyItemName.trim().toLowerCase();
+                
+                // Search for matching item in items collection
+                for (const item of itemsDatabase) {
+                    const itemName = (item?.itemName || "").toLowerCase();
+                    const name = (item?.name || "").toLowerCase();
+                    const description = (item?.description || "").toLowerCase();
+                    
+                    if (itemName === normalizedSupplyItem || 
+                        name === normalizedSupplyItem ||
+                        description === normalizedSupplyItem) {
+                        // Found matching item
+                        const itemCode = item?.itemCode || item?.code || "";
+                        if (itemCode) {
+                            // Extract class code from itemCode (e.g., CLASS-I from CLASS-I-001)
+                            const classMatch = itemCode.match(/^(CLASS-[IVX]+)/i) || itemCode.match(/^([A-Z]+)/);
+                            if (classMatch) {
+                                const classCode = classMatch[1];
+                                const className = supplyClassesMap.get(classCode) || classCode;
+                                return { className, itemCode };
+                            }
+                        }
+                        return { className: "Uncategorized", itemCode };
+                    }
+                }
+                
+                // Try partial match
+                for (const item of itemsDatabase) {
+                    const itemName = (item?.itemName || "").toLowerCase();
+                    const name = (item?.name || "").toLowerCase();
+                    
+                    if ((itemName && itemName.includes(normalizedSupplyItem)) || 
+                        (normalizedSupplyItem && itemName && normalizedSupplyItem.includes(itemName)) ||
+                        (name && name.includes(normalizedSupplyItem)) || 
+                        (normalizedSupplyItem && name && normalizedSupplyItem.includes(name))) {
+                        const itemCode = item?.itemCode || item?.code || "";
+                        if (itemCode) {
+                            const classMatch = itemCode.match(/^(CLASS-[IVX]+)/i) || itemCode.match(/^([A-Z]+)/);
+                            if (classMatch) {
+                                const classCode = classMatch[1];
+                                const className = supplyClassesMap.get(classCode) || classCode;
+                                return { className, itemCode };
+                            }
+                        }
+                        return { className: "Uncategorized", itemCode };
+                    }
+                }
+                
+                return { className: "Uncategorized", itemCode: "N/A" };
+            };
+            
             const detailsSheet = [
                 {
                     "Dispatch ID": dispatch.dispatchId,
@@ -920,19 +985,26 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 ? dispatch.supplies
                       .slice()
                       .sort((left, right) => {
-                          const categoryOrder = resolveSupplyClassLabel(left, itemClassLookup).localeCompare(
-                              resolveSupplyClassLabel(right, itemClassLookup)
-                          );
+                          const leftItemName = resolveSupplyItemLabel(left);
+                          const rightItemName = resolveSupplyItemLabel(right);
+                          const leftClass = findItemClassAndCode(leftItemName);
+                          const rightClass = findItemClassAndCode(rightItemName);
+                          const categoryOrder = leftClass.className.localeCompare(rightClass.className);
                           if (categoryOrder !== 0) return categoryOrder;
-                          return resolveSupplyItemLabel(left).localeCompare(resolveSupplyItemLabel(right));
+                          return leftItemName.localeCompare(rightItemName);
                       })
-                      .map((supply, index) => ({
-                          "No.": index + 1,
-                          "Supply Class": resolveSupplyClassLabel(supply, itemClassLookup),
-                          "Supply Item": resolveSupplyItemLabel(supply),
-                          "Quantity": resolveSupplyQuantityValue(supply),
-                      }))
-                : [{ "No.": 1, "Supply Class": "N/A", "Supply Item": "No supplies listed", "Quantity": 0 }];
+                      .map((supply, index) => {
+                          const itemName = resolveSupplyItemLabel(supply);
+                          const { className, itemCode } = findItemClassAndCode(itemName);
+                          return {
+                              "No.": index + 1,
+                              "Item Code": itemCode,
+                              "Supply Class": className,
+                              "Supply Item": itemName,
+                              "Quantity": resolveSupplyQuantityValue(supply),
+                          };
+                      })
+                : [{ "No.": 1, "Item Code": "N/A", "Supply Class": "N/A", "Supply Item": "No supplies listed", "Quantity": 0 }];
 
             const workbook = XLSX.utils.book_new();
             const detailsWorksheet = XLSX.utils.json_to_sheet(detailsSheet);
@@ -955,7 +1027,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 { wch: 40 },
             ];
 
-            suppliesWorksheet["!cols"] = [{ wch: 6 }, { wch: 24 }, { wch: 32 }, { wch: 12 }];
+            suppliesWorksheet["!cols"] = [{ wch: 6 }, { wch: 18 }, { wch: 24 }, { wch: 32 }, { wch: 12 }];
 
             XLSX.utils.book_append_sheet(workbook, detailsWorksheet, "Dispatch Details");
             XLSX.utils.book_append_sheet(workbook, suppliesWorksheet, "Supplies");

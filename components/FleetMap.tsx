@@ -12,6 +12,7 @@ type FleetVehicle = {
   lng?: number;
   isIdle?: boolean;
   hasActiveDispatch?: boolean;
+  isReturningToCamp?: boolean;
 };
 
 type RoutePoint = {
@@ -501,9 +502,11 @@ export default function FleetMap({
 
     visibleVehicles.forEach((vehicle) => {
       const isSelected = vehicle.id === selectedVehicleId;
-      const markerTone = vehicle.isIdle
-        ? "idle"
-        : (vehicle.hasActiveDispatch || vehicle.status === "Serviceable" ? "ready" : "unavailable");
+      const markerTone = vehicle.isReturningToCamp
+        ? "returning"
+        : vehicle.isIdle
+          ? "idle"
+          : (vehicle.hasActiveDispatch || vehicle.status === "Serviceable" ? "ready" : "unavailable");
       const icon = L.divIcon({
         className: "fleet-marker-wrapper",
         iconSize: [110, 56],
@@ -624,6 +627,15 @@ export default function FleetMap({
 
         .fleet-marker.idle .material-symbols-outlined {
           color: #333333;
+        }
+
+        .fleet-marker.returning .fleet-truck {
+          background: linear-gradient(135deg, #f8fafc, #ffffff);
+          border-color: rgba(148, 163, 184, 0.65);
+        }
+
+        .fleet-marker.returning .material-symbols-outlined {
+          color: #475569;
         }
 
         .fleet-marker.selected .fleet-truck {
