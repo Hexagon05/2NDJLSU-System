@@ -901,7 +901,7 @@ export default function VehiclePage() {
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Codename</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Plate</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Personnel Assigned</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Personnel Incharge</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Vehicle Type</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Status</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Capacity</th>
@@ -1067,7 +1067,7 @@ export default function VehiclePage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Personnel Assigned</label>
+                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Personnel Incharge</label>
                 <select
                   required
                   value={form.personnelId}
@@ -1427,7 +1427,7 @@ export default function VehiclePage() {
                   <p className="text-base text-slate-900 font-bold bg-slate-50 rounded-lg p-3 font-mono">{selectedVehicle.plate}</p>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Personnel Assigned</label>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Personnel Incharge</label>
                   <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedVehicle.personnelName}</p>
                 </div>
                 <div>
@@ -1712,7 +1712,7 @@ export default function VehiclePage() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Personnel Assigned</label>
+                      <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Personnel Incharge</label>
                       <select
                         value={selectedVehicle.personnelId || ""}
                         onChange={(e) => handleEditChange("personnelId", e.target.value)}

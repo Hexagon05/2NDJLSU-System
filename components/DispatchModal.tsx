@@ -77,6 +77,14 @@ const isTerminalDispatchStatus = (status: unknown): boolean => {
     );
 };
 
+const isTruthyParkedFlag = (value: unknown): boolean => {
+    const normalized = normalizeLookupValue(value);
+    return normalized === "true" || normalized === "yes" || normalized === "1";
+};
+
+const isDispatchMarkedParked = (dispatchData: any): boolean =>
+    isTruthyParkedFlag(dispatchData?.isParked) || isTruthyParkedFlag(dispatchData?.parked);
+
 const isVehicleInActiveDispatch = (
     vehicle: { codename: string; plate: string },
     activeDispatchTruckRefs: string[]
@@ -424,7 +432,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     return;
                 }
 
-                if (!isTerminalDispatchStatus(data.status)) {
+                if (!isTerminalDispatchStatus(data.status) && !isDispatchMarkedParked(data)) {
                     requisitionRefs.forEach((ref) => {
                         const normalizedRef = normalizeLookupValue(ref);
                         if (normalizedRef) {
@@ -604,7 +612,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
 
                 const activeTrucks = dispatchesSnap.docs
                     .map((dispatchDoc) => dispatchDoc.data() as any)
-                    .filter((dispatchData) => !isTerminalDispatchStatus(dispatchData?.status))
+                    .filter((dispatchData) => !isTerminalDispatchStatus(dispatchData?.status) && !isDispatchMarkedParked(dispatchData))
                     .map((dispatchData) => String(dispatchData?.truck || "").trim())
                     .filter(Boolean);
 
@@ -1197,6 +1205,10 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     blowbagetsChecklist,
                     hasBlowbagets,
                     status: "Pending",
+                    isParked: false,
+                    parked: false,
+                    parkedAt: null,
+                    parkedBy: null,
                     createdAt: serverTimestamp(),
                 });
             });

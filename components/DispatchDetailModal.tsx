@@ -46,11 +46,13 @@ interface Dispatch {
     startLocation?: { lat: number; lng: number; label: string };
     deliveryLocation?: { lat: number; lng: number; label: string };
     isParked?: boolean;
+    parked?: boolean | string | number | null;
     parkedAt?: Timestamp | null;
     parkedBy?: string | null;
     supplies: { category: string; item: string; quantity: number }[];
     othersNote?: string;
     proofOfDelivery?: unknown;
+    dispatchChat?: unknown[];
     createdAt: Timestamp | null;
 }
 
@@ -124,6 +126,11 @@ function toNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function isTruthyParkedFlag(value: unknown): boolean {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return normalized === "true" || normalized === "yes" || normalized === "1";
 }
 
 function extractRealtimeLocation(entry: unknown): RealtimeLocationPoint | null {
@@ -291,6 +298,23 @@ function toMillis(ts: Timestamp | { toMillis?: () => number } | null | undefined
     return ts?.toMillis?.() ?? 0;
 }
 
+function extractStopOverReason(value: string | undefined | null): string | null {
+    const text = String(value || "").trim();
+    if (!text) return null;
+
+    const reasonMatch = text.match(/reason\s*:\s*([\s\S]+)/i);
+    if (reasonMatch?.[1]) {
+        return reasonMatch[1].trim();
+    }
+
+    const normalized = text.toLowerCase();
+    if (normalized === "stop over" || normalized === "stopover") {
+        return null;
+    }
+
+    return text;
+}
+
 function formatDurationMinutes(totalMinutes: number): string {
     if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "0m";
 
@@ -323,12 +347,12 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [loadingReportLocation, setLoadingReportLocation] = useState(false);
     const [trackingEvents, setTrackingEvents] = useState<DispatchTrackingPoint[]>([]);
     const [movementPoints, setMovementPoints] = useState<DispatchTrackingPoint[]>([]);
-    const [stopOverCount, setStopOverCount] = useState(0);
     const [liveRtdbLocation, setLiveRtdbLocation] = useState<RealtimeLocationPoint | null>(null);
     const [loadingTrackingOverview, setLoadingTrackingOverview] = useState(false);
     const [selectedReportCategory, setSelectedReportCategory] = useState<"all" | "delay" | "stop-over" | "emergency" | "confirm-delivery">("all");
     const [delaySeenAtMs, setDelaySeenAtMs] = useState(0);
     const [tickNow, setTickNow] = useState(() => Date.now());
+    const [isCurrentUserAdmin, setIsCurrentUserAdmin] = useState(false);
 
     const delaySeenStorageKey = useMemo(() => `dispatch_delay_seen_at_${dispatch.id}`, [dispatch.id]);
     const sourceDispatch = liveDispatch;
@@ -655,24 +679,43 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         if (!dispatch.id) {
             setTrackingEvents([]);
             setMovementPoints([]);
-            setStopOverCount(0);
             return;
         }
 
         setLoadingTrackingOverview(true);
         try {
+            const dispatchFallbackLocation =
+                liveRtdbLocation
+                || extractCoordinates(sourceDispatch.CurrentLocation)
+                || extractCoordinates(sourceDispatch.currentLocation)
+                || extractCoordinates(sourceDispatch.location)
+                || extractCoordinates(sourceDispatch.startLocation)
+                || null;
+
+            const dispatchChatEntries = Array.isArray(sourceDispatch.dispatchChat) ? sourceDispatch.dispatchChat : [];
             const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
             const snap = await getDocs(query(messagesRef, orderBy("timestamp", "asc"), limit(250)));
             const statusReportsRef = collection(db, "dispatches", dispatch.id, "status_reports");
             const statusReportsSnap = await getDocs(query(statusReportsRef, orderBy("timestamp", "asc"), limit(250)));
-            const stopOverSessionCount = statusReportsSnap.docs.filter((reportDoc) => {
-                const entry = reportDoc.data() as any;
-                const reportType = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
-                return reportType.includes("stop over") || reportType.includes("stopover") || reportType.includes("stop-over");
-            }).length;
 
             const movement: DispatchTrackingPoint[] = [];
             const trackedReports: DispatchTrackingPoint[] = [];
+
+            const appendTrackedReport = (entry: any, id: string) => {
+                const reportKind = getReportKind(entry);
+                if (!isTrackedReportKind(reportKind)) return;
+
+                const location = extractCoordinates(entry) || dispatchFallbackLocation;
+                if (!location) return;
+
+                trackedReports.push({
+                    id,
+                    location,
+                    timestamp: (entry?.timestamp as Timestamp) || null,
+                    reportText: String(entry?.reason || entry?.text || entry?.message || entry?.statusNote || entry?.description || reportKind).trim(),
+                    reportKind,
+                });
+            };
 
             snap.docs.forEach((messageDoc, index) => {
                 const entry = messageDoc.data() as any;
@@ -696,27 +739,56 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 }
             });
 
-            statusReportsSnap.docs.forEach((reportDoc, index) => {
-                const entry = reportDoc.data() as any;
-                const reportType = String(entry?.type || entry?.status || entry?.action || entry?.event || "").toLowerCase();
-                if (!reportType.includes("stop over") && !reportType.includes("stopover") && !reportType.includes("stop-over")) {
-                    return;
+            dispatchChatEntries.forEach((entry, index) => {
+                const message = entry as any;
+                const isPersonnel = message?.isAdmin !== true;
+                if (!isPersonnel) return;
+
+                const pointLocation = extractCoordinates(message) || dispatchFallbackLocation;
+                const reportKind = getReportKind(message);
+
+                if (pointLocation) {
+                    movement.push({
+                        id: `chat-${dispatch.id}-${index}`,
+                        location: pointLocation,
+                        timestamp: (message?.timestamp as Timestamp) || null,
+                        reportText: String(message?.text || message?.message || message?.statusNote || "").trim(),
+                        reportKind,
+                    });
                 }
 
-                const location = extractCoordinates(entry) || liveRtdbLocation || null;
+                appendTrackedReport(message, `chat-report-${dispatch.id}-${index}`);
+            });
+
+            statusReportsSnap.docs.forEach((reportDoc, index) => {
+                const entry = reportDoc.data() as any;
+                const reportKind = getReportKind(entry);
+                if (!isTrackedReportKind(reportKind)) return;
+
+                const location = extractCoordinates(entry) || dispatchFallbackLocation;
                 if (!location) return;
 
-                const reportText = String(entry?.reason || entry?.text || entry?.message || entry?.statusNote || "").trim();
-                const point: DispatchTrackingPoint = {
+                trackedReports.push({
                     id: `sr-${reportDoc.id}-${index}`,
                     location,
                     timestamp: (entry?.timestamp as Timestamp) || null,
-                    reportText,
-                    reportKind: "Stop Over",
-                };
-
-                trackedReports.push(point);
+                    reportText: String(entry?.reason || entry?.text || entry?.message || entry?.statusNote || entry?.description || reportKind).trim(),
+                    reportKind,
+                });
             });
+
+            if ((sourceDispatch.status || "").toLowerCase().includes("delivered") || (sourceDispatch.status || "").toLowerCase().includes("successful dispatch")) {
+                const hasConfirmDelivery = trackedReports.some((event) => event.reportKind === "Confirm Delivery");
+                if (!hasConfirmDelivery && dispatchFallbackLocation) {
+                    trackedReports.push({
+                        id: `delivery-confirmation-${dispatch.id}`,
+                        location: dispatchFallbackLocation,
+                        timestamp: sourceDispatch.updatedAt || sourceDispatch.UpdatedAt || sourceDispatch.createdAt || null,
+                        reportText: String(sourceDispatch.status || "Confirm Delivery").trim(),
+                        reportKind: "Confirm Delivery",
+                    });
+                }
+            }
 
             const fallbackCurrentLocation = liveRtdbLocation || null;
 
@@ -811,12 +883,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
             setMovementPoints(movement);
             setTrackingEvents(dedupedTrackedReports);
-            setStopOverCount(stopOverSessionCount || dedupedTrackedReports.filter((event) => event.reportKind === "Stop Over").length);
         } catch (error) {
             console.error("Error loading tracking overview:", error);
             setMovementPoints([]);
             setTrackingEvents([]);
-            setStopOverCount(0);
         } finally {
             setLoadingTrackingOverview(false);
         }
@@ -881,6 +951,25 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         };
     }, []);
 
+    useEffect(() => {
+        const checkAdminRole = async () => {
+            if (!user?.uid) {
+                setIsCurrentUserAdmin(false);
+                return;
+            }
+
+            try {
+                const userDoc = await getDoc(doc(db, "users", user.uid));
+                const role = String(userDoc.data()?.role || "").trim().toLowerCase();
+                setIsCurrentUserAdmin(userDoc.exists() && role === "admin");
+            } catch {
+                setIsCurrentUserAdmin(false);
+            }
+        };
+
+        checkAdminRole();
+    }, [user?.uid]);
+
     const handleOpenProofModal = async () => {
         setShowProofModal(true);
         await loadDeliveryProofImages();
@@ -897,6 +986,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                 successfulDispatchAt: Timestamp.now(),
                 deliveryProofCount: proofImages.length,
                 isParked: false,
+                parked: false,
                 parkedAt: null,
                 parkedBy: null,
             });
@@ -922,6 +1012,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             const dispatchRef = doc(db, "dispatches", dispatch.id);
             await updateDoc(dispatchRef, {
                 isParked: true,
+                parked: true,
                 parkedAt: Timestamp.now(),
                 parkedBy: user?.uid || null,
             });
@@ -1134,29 +1225,11 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     );
     const delayEvents = sortedTrackingEvents.filter((event) => event.reportKind === "Delay");
     const stopOverEvents = sortedTrackingEvents.filter((event) => event.reportKind === "Stop Over");
-    const emergencyEvents = sortedTrackingEvents.filter((event) => event.reportKind === "Emergency");
-    const confirmDeliveryEvents = sortedTrackingEvents.filter((event) => event.reportKind === "Confirm Delivery");
-
-    const getReportSummary = (events: DispatchTrackingPoint[]) => {
-        const latest = events[events.length - 1] || null;
-        return {
-            total: events.length,
-            coordinates: latest
-                ? `${latest.location.lat.toFixed(6)}, ${latest.location.lng.toFixed(6)}`
-                : "-",
-            timestamp: latest ? formatTime(latest.timestamp) : "-",
-            reason: latest?.reportText?.trim() ? latest.reportText.trim() : "-",
-        };
-    };
-
-    const delaySummary = getReportSummary(delayEvents);
-    const stopOverSummary = getReportSummary(stopOverEvents);
-    const emergencySummary = getReportSummary(emergencyEvents);
-    const confirmDeliverySummary = getReportSummary(confirmDeliveryEvents);
 
     const latestDelayEvent = delayEvents[delayEvents.length - 1] || null;
     const latestDelayAtMs = toMillis(latestDelayEvent?.timestamp || null);
     const hasUnreadDelayNotifier = latestDelayAtMs > delaySeenAtMs;
+    const latestDelayReason = latestDelayEvent ? extractStopOverReason(latestDelayEvent.reportText) : null;
 
     const latestStopOverEvent = stopOverEvents[stopOverEvents.length - 1] || null;
     const latestStopOverAtMs = toMillis(latestStopOverEvent?.timestamp || null);
@@ -1200,12 +1273,16 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         )
         : null;
 
+    const stopOverReason = latestStopOverEvent
+        ? extractStopOverReason(latestStopOverEvent.reportText)
+        : extractStopOverReason(sourceDispatch.status);
+
     const stopOverMonitorEvent = latestStopOverEvent || (isStopOverActive
         ? {
             id: `stop-over-monitor-${sourceDispatch.id}`,
             location: liveRtdbLocation || sourceDispatch.CurrentLocation || sourceDispatch.currentLocation || sourceDispatch.location || { lat: 0, lng: 0 },
             timestamp: sourceDispatch.UpdatedAt || sourceDispatch.updatedAt || sourceDispatch.createdAt || null,
-            reportText: String(sourceDispatch.status || "Stop Over").trim(),
+            reportText: stopOverReason ? `Reason: ${stopOverReason}` : String(sourceDispatch.status || "Stop Over").trim(),
             reportKind: "Stop Over",
         }
         : null);
@@ -1241,8 +1318,8 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const canComplete = ["En Route", "Ongoing", "Approved", "Stop Over"].includes(effectiveDispatchStatus);
     const canConfirmDelivery = sourceDispatch.status === "Delivered";
     const canViewProof = sourceDispatch.status === "Successful Dispatch";
-    const isParked = sourceDispatch.isParked === true;
-    const canMarkAsParked = ["Successful Dispatch", "Delivered"].includes(sourceDispatch.status) && !isParked;
+    const isParked = isTruthyParkedFlag(sourceDispatch.isParked) || isTruthyParkedFlag(sourceDispatch.parked);
+    const canMarkAsParked = isCurrentUserAdmin && !authLoading && Boolean(sourceDispatch.id) && !isParked;
     const canCancel = ["Pending", "Approved", "En Route", "Ongoing", "Stop Over"].includes(effectiveDispatchStatus);
     const deliveryLocation = sourceDispatch.deliveryLocation || sourceDispatch.location;
     const baseCampLocation = sourceDispatch.startLocation || {
@@ -1462,7 +1539,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         </div>
                         <div>
                             <h2 className="text-lg font-bold text-slate-900">Dispatch Request Details</h2>
-                            <p className="text-[10px] font-mono text-slate-500 uppercase tracking-[0.2em]">Deployment ID: {dispatch.dispatchId}</p>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-400">Deployment ID</p>
+                            <p className="text-2xl md:text-3xl font-black font-mono tracking-[0.12em] text-slate-900 leading-tight">
+                                {dispatch.dispatchId}
+                            </p>
                         </div>
                     </div>
                     <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-200 transition-colors text-slate-400 hover:text-slate-600">
@@ -1618,7 +1698,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                         </div>
 
                         {hasUnreadDelayNotifier && latestDelayEvent && (
-                            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 flex items-center justify-between gap-3">
+                            <div className="rounded-2xl border border-red-300 bg-gradient-to-r from-red-50 to-rose-50 px-4 py-3 flex items-center justify-between gap-3 shadow-sm">
                                 <div className="flex items-start gap-3">
                                     <span className="material-symbols-outlined text-red-600">notifications_active</span>
                                     <div>
@@ -1627,6 +1707,11 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                             Delay coordinate: {latestDelayEvent.location.lat.toFixed(6)}, {latestDelayEvent.location.lng.toFixed(6)}
                                         </p>
                                         <p className="text-xs text-red-700/80">Reported at {formatTime(latestDelayEvent.timestamp)}</p>
+                                        {latestDelayReason && (
+                                            <p className="text-xs text-red-700/80 font-semibold">
+                                                Reason: {latestDelayReason}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                                 <button
@@ -1643,6 +1728,65 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             </div>
                         )}
 
+                        {latestDelayEvent && !hasUnreadDelayNotifier && (
+                            <div className="rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 flex items-center justify-between gap-3 shadow-sm">
+                                <div className="flex items-start gap-3">
+                                    <span className="material-symbols-outlined text-amber-600">schedule</span>
+                                    <div>
+                                        <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Delay Report</p>
+                                        <p className="text-sm text-amber-900 font-semibold">
+                                            {latestDelayEvent.reportText || "Delay recorded"}
+                                        </p>
+                                        <p className="text-xs text-amber-700/80">Reported at {formatTime(latestDelayEvent.timestamp)}</p>
+                                        {latestDelayReason && (
+                                            <p className="text-xs text-amber-700/80 font-semibold">
+                                                Reason: {latestDelayReason}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedReportCategory("delay")}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-2 text-[11px] font-bold uppercase text-white hover:bg-amber-700"
+                                >
+                                    <span className="material-symbols-outlined" style={{ fontSize: "0.95rem" }}>visibility</span>
+                                    View Delay Logs
+                                </button>
+                            </div>
+                        )}
+
+                        {latestDelayEvent && (
+                            <div className="rounded-2xl border border-orange-300 bg-gradient-to-r from-orange-50 via-amber-50 to-amber-100 px-4 py-3 flex items-center justify-between gap-3 shadow-sm">
+                                <div className="flex items-start gap-3">
+                                    <span className="material-symbols-outlined text-orange-600">warning</span>
+                                    <div>
+                                        <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-700">Delay Monitor</p>
+                                        <p className="text-sm text-orange-900 font-bold">
+                                            {latestDelayEvent.reportText || "Delay recorded"}
+                                        </p>
+                                        <p className="text-xs text-orange-700/80">
+                                            Delay coordinate: {latestDelayEvent.location.lat.toFixed(6)}, {latestDelayEvent.location.lng.toFixed(6)}
+                                        </p>
+                                        <p className="text-xs text-orange-700/80">Reported at {formatTime(latestDelayEvent.timestamp)}</p>
+                                        {latestDelayReason && (
+                                            <p className="text-xs text-orange-800 font-semibold">
+                                                Reason: {latestDelayReason}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedReportCategory("delay")}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-3 py-2 text-[11px] font-bold uppercase text-white hover:bg-orange-700"
+                                >
+                                    <span className="material-symbols-outlined" style={{ fontSize: "0.95rem" }}>visibility</span>
+                                    Open Delay Logs
+                                </button>
+                            </div>
+                        )}
+
                         {stopOverMonitorEvent && (
                             <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 flex items-center justify-between gap-3">
                                 <div>
@@ -1653,6 +1797,11 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                                     <p className="text-xs text-sky-700/80">
                                         Duration tracked: {formatDurationMinutes(stopOverTrackedMinutes)} • Start {formatTime(stopOverMonitorEvent.timestamp)}
                                     </p>
+                                    {stopOverReason && (
+                                        <p className="text-xs text-sky-700/80">
+                                            Reason: {stopOverReason}
+                                        </p>
+                                    )}
                                     {!isStopOverActive && stopOverEndedAtLabel && (
                                         <p className="text-xs text-sky-700/70">
                                             Ended at {stopOverEndedAtLabel}
@@ -1670,99 +1819,27 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             </div>
                         )}
 
-                        <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-5 items-stretch">
-                            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden min-h-[420px] h-full self-stretch">
-                                <div className="h-full min-h-[420px]">
-                                    {loadingTrackingOverview ? (
-                                        <div className="h-full w-full bg-slate-100 animate-pulse flex items-center justify-center text-xs font-semibold text-slate-500">
-                                            Loading truck movement map...
-                                        </div>
-                                    ) : (
-                                        <DispatchTrackingMiniMap
-                                            movementPoints={movementPoints}
-                                            reportEvents={trackingEvents}
-                                            baseCampLocation={baseCampLocation}
-                                            currentLocation={currentOperationalLocation || undefined}
-                                            deliveryLocation={deliveryLocation}
-                                        />
-                                    )}
-                                </div>
+                        <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
+                                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Tracking Map</p>
+                                <p className="text-[11px] font-medium text-slate-500">
+                                    {movementPoints.length} movement points • {sortedTrackingEvents.length} tracked reports
+                                </p>
                             </div>
-
-                            <div className="space-y-3 h-full">
-                                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setSelectedReportCategory("delay");
-                                            if (latestDelayAtMs > 0) {
-                                                setDelaySeenAtMs(latestDelayAtMs);
-                                            }
-                                        }}
-                                        className={`relative rounded-2xl border p-3 text-left transition ${selectedReportCategory === "delay" ? "border-amber-400 bg-amber-100/80 shadow-sm" : "border-amber-200 bg-amber-50/70 hover:border-amber-300"}`}
-                                    >
-                                        {hasUnreadDelayNotifier && (
-                                            <span className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full bg-red-500 ring-2 ring-white" />
-                                        )}
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-700">Delay Reports</p>
-                                        <p className="text-xl font-black text-amber-900">{delaySummary.total}</p>
-                                        <p className="text-[11px] text-amber-800/80">Coordinates: {delaySummary.coordinates}</p>
-                                        <p className="text-[11px] text-amber-800/80">Time: {delaySummary.timestamp}</p>
-                                        <p className="text-[11px] text-amber-800/80 truncate">Reason: {delaySummary.reason}</p>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedReportCategory("stop-over")}
-                                        className={`rounded-2xl border p-3 text-left transition ${selectedReportCategory === "stop-over" ? "border-sky-400 bg-sky-100/80 shadow-sm" : "border-sky-200 bg-sky-50/70 hover:border-sky-300"}`}
-                                    >
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-sky-700">Stop Over Reports</p>
-                                        <p className="text-xl font-black text-sky-900">{stopOverCount}</p>
-                                        <p className="text-[11px] text-sky-800/80">Coordinates: {stopOverSummary.coordinates}</p>
-                                        <p className="text-[11px] text-sky-800/80">Time: {stopOverSummary.timestamp}</p>
-                                        <p className="text-[11px] text-sky-800/80 truncate">Reason: {stopOverSummary.reason}</p>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedReportCategory("emergency")}
-                                        className={`rounded-2xl border p-3 text-left transition ${selectedReportCategory === "emergency" ? "border-rose-400 bg-rose-100/80 shadow-sm" : "border-rose-200 bg-rose-50/70 hover:border-rose-300"}`}
-                                    >
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-700">Emergency Reports</p>
-                                        <p className="text-xl font-black text-rose-900">{emergencySummary.total}</p>
-                                        <p className="text-[11px] text-rose-800/80">Coordinates: {emergencySummary.coordinates}</p>
-                                        <p className="text-[11px] text-rose-800/80">Time: {emergencySummary.timestamp}</p>
-                                        <p className="text-[11px] text-rose-800/80 truncate">Reason: {emergencySummary.reason}</p>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedReportCategory("confirm-delivery")}
-                                        className={`rounded-2xl border p-3 text-left transition ${selectedReportCategory === "confirm-delivery" ? "border-emerald-400 bg-emerald-100/80 shadow-sm" : "border-emerald-200 bg-emerald-50/70 hover:border-emerald-300"}`}
-                                    >
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Confirm Delivery</p>
-                                        <p className="text-xl font-black text-emerald-900">{confirmDeliverySummary.total}</p>
-                                        <p className="text-[11px] text-emerald-800/80">Coordinates: {confirmDeliverySummary.coordinates}</p>
-                                        <p className="text-[11px] text-emerald-800/80">Time: {confirmDeliverySummary.timestamp}</p>
-                                        <p className="text-[11px] text-emerald-800/80 truncate">Reason: {confirmDeliverySummary.reason}</p>
-                                    </button>
-                                </div>
-
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedReportCategory("all")}
-                                    className={`w-full rounded-2xl border px-3 py-2 text-[11px] font-bold uppercase tracking-[0.2em] transition ${selectedReportCategory === "all" ? "border-slate-400 bg-slate-100 text-slate-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}
-                                >
-                                    Show All Categories
-                                </button>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
-                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Stop Over Timer</p>
-                                    <p className="text-sm font-bold text-slate-800">
-                                        {stopOverCount > 0 ? formatDurationMinutes(stopOverTrackedMinutes) : "No stop over recorded"}
-                                    </p>
-                                    {stopOverMonitorEvent && (
-                                        <p className="text-[11px] text-slate-500">
-                                            {isStopOverActive ? "Active and counting" : "Ended when dispatch resumed"}
-                                        </p>
-                                    )}
-                                </div>
+                            <div className="min-h-[360px] aspect-[16/7] w-full">
+                                {loadingTrackingOverview ? (
+                                    <div className="h-full w-full bg-slate-100 animate-pulse flex items-center justify-center text-xs font-semibold text-slate-500">
+                                        Loading truck movement map...
+                                    </div>
+                                ) : (
+                                    <DispatchTrackingMiniMap
+                                        movementPoints={movementPoints}
+                                        reportEvents={trackingEvents}
+                                        baseCampLocation={baseCampLocation}
+                                        currentLocation={currentOperationalLocation || undefined}
+                                        deliveryLocation={deliveryLocation}
+                                    />
+                                )}
                             </div>
                         </div>
 

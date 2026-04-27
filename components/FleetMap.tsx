@@ -13,6 +13,7 @@ type FleetVehicle = {
   isIdle?: boolean;
   hasActiveDispatch?: boolean;
   isReturningToCamp?: boolean;
+  isStopOver?: boolean;
 };
 
 type RoutePoint = {
@@ -542,7 +543,9 @@ export default function FleetMap({
 
     visibleVehicles.forEach((vehicle) => {
       const isSelected = vehicle.id === selectedVehicleId;
-      const markerTone = vehicle.isReturningToCamp
+      const markerTone = vehicle.isStopOver
+        ? "stopover"
+        : vehicle.isReturningToCamp
         ? "returning"
         : vehicle.isIdle
           ? "idle"
@@ -652,6 +655,21 @@ export default function FleetMap({
         .fleet-marker.ready .fleet-truck {
           background: linear-gradient(135deg, #059669, #10b981);
           border-color: rgba(255, 255, 255, 0.75);
+        }
+
+        .fleet-marker.stopover .fleet-truck {
+          background: linear-gradient(135deg, #f97316, #fb923c);
+          border-color: rgba(255, 255, 255, 0.85);
+        }
+
+        .fleet-marker.stopover .material-symbols-outlined {
+          color: #ffffff;
+        }
+
+        .fleet-marker.stopover .fleet-label {
+          color: #9a3412;
+          background: rgba(255, 247, 237, 0.98);
+          border-color: rgba(249, 115, 22, 0.32);
         }
 
         .fleet-marker.unavailable .fleet-truck {

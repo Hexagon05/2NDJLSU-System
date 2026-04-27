@@ -13,6 +13,8 @@ export type ActivityType =
   | "DISPATCH_CREATED"
   | "DISPATCH_UPDATED"
   | "DISPATCH_COMPLETED"
+  | "DISPATCH_STOP_OVER"
+  | "DISPATCH_DELAY"
   | "EXPORT_EXCEL"
   | "LOGIN"
   | "LOGOUT";
@@ -133,6 +135,8 @@ export const getActivityIcon = (type: ActivityType): string => {
     DISPATCH_CREATED: "send",
     DISPATCH_UPDATED: "edit_note",
     DISPATCH_COMPLETED: "task_alt",
+    DISPATCH_STOP_OVER: "pause_circle",
+    DISPATCH_DELAY: "schedule",
     EXPORT_EXCEL: "download",
     LOGIN: "login",
     LOGOUT: "logout",
@@ -151,6 +155,8 @@ export const getActivityColor = (type: ActivityType): string => {
     DISPATCH_CREATED: "text-emerald-600",
     DISPATCH_UPDATED: "text-emerald-500",
     DISPATCH_COMPLETED: "text-green-600",
+    DISPATCH_STOP_OVER: "text-orange-600",
+    DISPATCH_DELAY: "text-amber-600",
     EXPORT_EXCEL: "text-amber-600",
     LOGIN: "text-teal-600",
     LOGOUT: "text-slate-500",

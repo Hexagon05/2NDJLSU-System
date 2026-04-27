@@ -56,7 +56,9 @@ interface Dispatch {
   startLocation?: { lat: number; lng: number; label: string };
   deliveryLocation?: { lat: number; lng: number; label: string };
   isParked?: boolean;
+  parked?: boolean | string | number | null;
   parkedAt?: Timestamp | null;
+  dispatchChat?: unknown[];
   supplies: { category: string; item: string; quantity: number }[];
   createdAt: Timestamp | null;
 }
@@ -73,6 +75,7 @@ interface Vehicle {
   isIdle?: boolean;
   hasActiveDispatch?: boolean;
   isReturningToCamp?: boolean;
+  isStopOver?: boolean;
 }
 
 interface RoutePoint {
@@ -112,6 +115,8 @@ const STATUS_STYLES: Record<string, string> = {
   "En Route":
     "bg-violet-100 text-violet-700 border border-violet-300",
   Ongoing:
+    "bg-orange-100 text-orange-700 border border-orange-300",
+  "Stop Over":
     "bg-orange-100 text-orange-700 border border-orange-300",
   Delivered:
     "bg-cyan-100 text-cyan-700 border border-cyan-300",
@@ -168,8 +173,18 @@ export default function Dashboard() {
   const compactNormalize = (value: string | undefined | null): string =>
     normalize(value).replace(/[^a-z0-9]+/g, "");
 
+  const isTruthyParkedFlag = (value: unknown): boolean => {
+    const normalized = normalize(String(value ?? ""));
+    return normalized === "true" || normalized === "yes" || normalized === "1";
+  };
+
+  const isDispatchMarkedParked = (dispatch: Dispatch | null | undefined): boolean => {
+    if (!dispatch) return false;
+    return isTruthyParkedFlag(dispatch.isParked) || isTruthyParkedFlag(dispatch.parked);
+  };
+
   const isTrackedDispatch = (dispatch: Dispatch | null | undefined): boolean => {
-    if (!dispatch || dispatch.isParked === true) return false;
+    if (!dispatch || isDispatchMarkedParked(dispatch)) return false;
 
     // Status no longer controls live tracking; parked flag is the single lock.
     return Boolean(dispatch.id || dispatch.dispatchId);
@@ -638,6 +653,51 @@ export default function Dashboard() {
     return vehicleDispatchByVehicleId.get(vehicle.id) || null;
   };
 
+  const isStopOverStatus = (status: string | undefined | null): boolean => {
+    const normalized = normalize(status);
+    return normalized.includes("stop over") || normalized.includes("stopover");
+  };
+
+  const isDelayStatus = (status: string | undefined | null): boolean => {
+    const normalized = normalize(status);
+    return normalized.includes("delay") || normalized.includes("late") || normalized.includes("traffic") || normalized.includes("break") || normalized.includes("rest");
+  };
+
+  const extractReasonText = (value: string | undefined | null): string | null => {
+    const text = String(value || "").trim();
+    if (!text) return null;
+
+    const reasonMatch = text.match(/reason\s*:\s*([\s\S]+)/i);
+    if (reasonMatch?.[1]) {
+      return reasonMatch[1].trim();
+    }
+
+    return text;
+  };
+
+  const getStopOverReason = (dispatch: Dispatch): string | null => {
+    const chatEntries = Array.isArray(dispatch.dispatchChat) ? dispatch.dispatchChat : [];
+
+    for (let index = chatEntries.length - 1; index >= 0; index -= 1) {
+      const entry = chatEntries[index] as any;
+      const text = String(entry?.text || entry?.message || entry?.statusNote || entry?.reason || "").trim();
+      if (!text) continue;
+
+      const entrySignal = `${text} ${String(entry?.type || entry?.status || entry?.action || "")}`.toLowerCase();
+      if (!entrySignal.includes("stop over") && !entrySignal.includes("stopover") && !entrySignal.includes("stop-over")) {
+        continue;
+      }
+
+      const parsedReason = extractReasonText(text);
+      if (parsedReason && !isStopOverStatus(parsedReason)) {
+        return parsedReason;
+      }
+    }
+
+    const fallbackReason = String((dispatch as any)?.reason || (dispatch as any)?.statusNote || "").trim();
+    return fallbackReason || null;
+  };
+
   const filteredVehicles = vehicles.filter((vehicle) => {
     const queryMatch =
       normalize(vehicle.codename).includes(normalize(vehicleSearch))
@@ -664,6 +724,7 @@ export default function Dashboard() {
     const isReturningToCamp = activeDispatch
       ? normalize(activeDispatch.status).includes("successful dispatch")
       : false;
+    const isStopOver = activeDispatch ? isStopOverStatus(activeDispatch.status) : false;
     const isIdle = !!(
       activeDispatch
       && (
@@ -680,6 +741,7 @@ export default function Dashboard() {
       isIdle,
       hasActiveDispatch: !!activeDispatch && !!liveLocation,
       isReturningToCamp,
+      isStopOver,
     };
   });
 
@@ -946,6 +1008,91 @@ export default function Dashboard() {
     }
   }, [recentDispatches.length, dispatches]);
 
+  useEffect(() => {
+    const actorEmail = user?.email;
+    if (!actorEmail || typeof window === "undefined") return;
+
+    const syncDispatchAlertActivities = async () => {
+      const storageKey = "dispatch_alert_seen_v1";
+      let seenState: Record<string, { stopOver?: boolean; delay?: boolean }> = {};
+
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        seenState = stored ? (JSON.parse(stored) as Record<string, { stopOver?: boolean; delay?: boolean }>) : {};
+      } catch {
+        seenState = {};
+      }
+
+      const nextSeenState: Record<string, { stopOver?: boolean; delay?: boolean }> = { ...seenState };
+      let changed = false;
+
+      for (const dispatch of dispatches) {
+        if (!dispatch.id) continue;
+
+        const currentSeen = nextSeenState[dispatch.id] || {};
+        const stopOverActive = isStopOverStatus(dispatch.status);
+        const delayActive = Boolean(dispatchDelayIndicators[dispatch.id]) || isDelayStatus(dispatch.status);
+        const stopOverReason = getStopOverReason(dispatch);
+
+        if (stopOverActive && !currentSeen.stopOver) {
+          const stopOverDescription = stopOverReason
+            ? `Dispatch ${dispatch.dispatchId} entered Stop Over: ${stopOverReason}`
+            : `Dispatch ${dispatch.dispatchId} entered Stop Over`;
+
+          await logActivity(
+            "DISPATCH_STOP_OVER",
+            stopOverDescription,
+            actorEmail,
+            {
+              dispatchId: dispatch.dispatchId,
+              truck: dispatch.truck,
+              officer: dispatch.officer,
+              status: dispatch.status,
+              reason: stopOverReason,
+            }
+          );
+          nextSeenState[dispatch.id] = { ...currentSeen, stopOver: true };
+          changed = true;
+        }
+
+        if (!stopOverActive && currentSeen.stopOver) {
+          nextSeenState[dispatch.id] = { ...currentSeen, stopOver: false };
+          changed = true;
+        }
+
+        if (delayActive && !currentSeen.delay) {
+          await logActivity(
+            "DISPATCH_DELAY",
+            `Dispatch ${dispatch.dispatchId} reported Delay`,
+            actorEmail,
+            {
+              dispatchId: dispatch.dispatchId,
+              truck: dispatch.truck,
+              officer: dispatch.officer,
+              status: dispatch.status,
+              delayLabel: dispatchDelayIndicators[dispatch.id] || dispatch.status,
+            }
+          );
+          nextSeenState[dispatch.id] = { ...currentSeen, delay: true };
+          changed = true;
+        }
+
+        if (!delayActive && currentSeen.delay) {
+          nextSeenState[dispatch.id] = { ...currentSeen, delay: false };
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        window.localStorage.setItem(storageKey, JSON.stringify(nextSeenState));
+      }
+    };
+
+    syncDispatchAlertActivities().catch((error) => {
+      console.error("Error syncing dispatch alert activities:", error);
+    });
+  }, [dispatchDelayIndicators, dispatches, user?.email]);
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
@@ -997,7 +1144,7 @@ export default function Dashboard() {
         return { icon: "deployed_code", iconColor: "text-orange-500" };
       case "Stop Over":
       case "Stope Over":
-        return { icon: "pause_circle", iconColor: "text-sky-500" };
+        return { icon: "pause_circle", iconColor: "text-orange-500" };
       case "Delivered":
         return { icon: "inventory_2", iconColor: "text-cyan-500" };
       case "Completed":
