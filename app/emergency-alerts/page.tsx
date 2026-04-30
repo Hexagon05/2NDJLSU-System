@@ -333,11 +333,6 @@ export default function EmergencyAlerts() {
     }
   };
 
-  const requestResolveReport = (reportId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setPendingResolveReportId(reportId);
-    setResolveDialogOpen(true);
-  };
 
   const handleLogout = async () => {
     await signOut();
