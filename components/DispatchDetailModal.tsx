@@ -364,6 +364,41 @@ function formatDurationMinutes(totalMinutes: number): string {
     return `${hours}h ${minutes}m`;
 }
 
+function parseDurationString(text: string | null | undefined): number | null {
+    if (!text) return null;
+    const t = String(text).trim().toLowerCase();
+    if (!t) return null;
+
+    // Direct number like "90" -> minutes
+    if (/^\d+(?:\.\d+)?$/.test(t)) return Number(t);
+
+    // Hours and minutes like "1h 30m", "1h30m", "1h"
+    const hourMatch = t.match(/(\d+(?:\.\d+)?)\s*h/);
+    const minuteMatch = t.match(/(\d+(?:\.\d+)?)\s*m/);
+    let total = 0;
+    let matched = false;
+    if (hourMatch) {
+        total += Number(hourMatch[1]) * 60;
+        matched = true;
+    }
+    if (minuteMatch) {
+        total += Number(minuteMatch[1]);
+        matched = true;
+    }
+
+    // Compact shorthand like "90m" or "1.5h"
+    if (!matched) {
+        const compact = t.match(/^(\d+(?:\.\d+)?)(h|m)$/);
+        if (compact) {
+            const v = Number(compact[1]);
+            if (compact[2] === 'h') return v * 60;
+            return v;
+        }
+    }
+
+    return matched ? total : null;
+}
+
 export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Props) {
     const { user, loading: authLoading } = useAuth();
     const [liveDispatch, setLiveDispatch] = useState<Dispatch>(dispatch);
@@ -1322,7 +1357,9 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const storedDelayMinutes = Number((sourceDispatch as any)?.computedDelayMinutes);
     const storedStopOverMinutes = Number((sourceDispatch as any)?.computedStopOverMinutes);
     const storedIdleMinutes = Number((sourceDispatch as any)?.computedIdleMinutes);
-    const hasStoredDelayValues = Number.isFinite(storedDelayMinutes) || Number.isFinite(storedStopOverMinutes) || Number.isFinite(storedIdleMinutes);
+    const hasStoredDelayValues = (Number.isFinite(storedDelayMinutes) && storedDelayMinutes > 0)
+        || (Number.isFinite(storedStopOverMinutes) && storedStopOverMinutes > 0)
+        || (Number.isFinite(storedIdleMinutes) && storedIdleMinutes > 0);
 
     const stopOverTrackedMinutes = hasStoredDelayValues && Number.isFinite(storedStopOverMinutes)
         ? Math.max(0, storedStopOverMinutes)
@@ -1357,9 +1394,20 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             ? Math.max(0, (dispatchDeliveredAtMs - latestIdleAtMs) / 60000)
             : 0;
 
-    const totalDelayMinutes = hasStoredDelayValues && Number.isFinite(storedDelayMinutes)
-        ? Math.max(0, storedDelayMinutes)
-        : stopOverTrackedMinutes + idleTrackedMinutes;
+    const totalDelayMinutes = (() => {
+        // If both stored stop-over and idle minutes exist, prefer their sum (more granular)
+        if (Number.isFinite(storedStopOverMinutes) && Number.isFinite(storedIdleMinutes)) {
+            return Math.max(0, storedStopOverMinutes + storedIdleMinutes);
+        }
+
+        // If an explicit stored total exists, use it
+        if (Number.isFinite(storedDelayMinutes)) {
+            return Math.max(0, storedDelayMinutes);
+        }
+
+        // Otherwise compute from tracked values
+        return stopOverTrackedMinutes + idleTrackedMinutes;
+    })();
     const showTotalDelay = isDeliveredStatus(sourceDispatch.status);
 
     const stopOverReason = latestStopOverEvent
@@ -1668,13 +1716,52 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
                         {showTotalDelay ? (
                             <div className="p-5 rounded-3xl bg-amber-50 border border-amber-100 shadow-sm">
-                                <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-2">Total Delay Time</p>
-                                <p className="text-2xl font-black text-amber-800">{formatDurationMinutes(totalDelayMinutes)}</p>
-                                <p className="mt-2 text-xs font-semibold text-amber-700">
-                                    Stop Over {formatDurationMinutes(stopOverTrackedMinutes)} + Idle {formatDurationMinutes(idleTrackedMinutes)}
-                                </p>
+                                <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-2">Delay Breakdown</p>
+                                {/* Prefer stored values when available for more accurate historical display */}
+                                {(() => {
+                                    // Try numeric stored values first
+                                    let displayStopOver: number | null = Number.isFinite(storedStopOverMinutes) ? storedStopOverMinutes : null;
+                                    let displayIdle: number | null = Number.isFinite(storedIdleMinutes) ? storedIdleMinutes : null;
+                                    let displayTotal: number | null = Number.isFinite(storedDelayMinutes) ? storedDelayMinutes : null;
+
+                                    // If numeric stored values are missing, try parsing the computedDelayLabel string (e.g. "8m (0m+8m)")
+                                    const labelText = String((sourceDispatch as any)?.computedDelayLabel || "");
+                                    const parenthetical = labelText.match(/\(([^)]+)\)/)?.[1] || null;
+                                    if (parenthetical) {
+                                        const parts = parenthetical.split(/\s*\+\s*/);
+                                        if (!displayStopOver && parts[0]) {
+                                            const parsed = parseDurationString(parts[0]);
+                                            if (Number.isFinite(parsed ?? NaN)) displayStopOver = parsed as number;
+                                        }
+                                        if (!displayIdle && parts[1]) {
+                                            const parsed = parseDurationString(parts[1]);
+                                            if (Number.isFinite(parsed ?? NaN)) displayIdle = parsed as number;
+                                        }
+                                    }
+
+                                    // Fallback: try parsing the leading total from label (before parentheses)
+                                    if (displayTotal == null && labelText) {
+                                        const leading = labelText.split('(')[0].trim();
+                                        const parsed = parseDurationString(leading);
+                                        if (Number.isFinite(parsed ?? NaN)) displayTotal = parsed as number;
+                                    }
+
+                                    // Final fallbacks to computed/tracked values
+                                    const finalStopOver = displayStopOver ?? stopOverTrackedMinutes;
+                                    const finalIdle = displayIdle ?? idleTrackedMinutes;
+                                    const finalTotal = displayTotal ?? (finalStopOver + finalIdle);
+
+                                    return (
+                                        <div>
+                                            <p className="text-sm font-semibold text-amber-700">Stop Over: {formatDurationMinutes(finalStopOver)}</p>
+                                            <p className="text-sm font-semibold text-amber-700 mt-1">Idle: {formatDurationMinutes(finalIdle)}</p>
+                                            <p className="text-2xl font-black text-amber-800 mt-3">Total: {formatDurationMinutes(finalTotal)}</p>
+                                        </div>
+                                    );
+                                })()}
+
                                 {latestIdleEvent && (
-                                    <p className="mt-1 text-[11px] text-amber-700/80">
+                                    <p className="mt-2 text-[11px] text-amber-700/80">
                                         Last idle/break log at {formatTime(latestIdleEvent.timestamp)}
                                     </p>
                                 )}
