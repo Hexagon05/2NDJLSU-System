@@ -49,10 +49,17 @@ interface Dispatch {
     parked?: boolean | string | number | null;
     parkedAt?: Timestamp | null;
     parkedBy?: string | null;
+    deliveredAt?: Timestamp | null;
+    completedAt?: Timestamp | null;
+    successfulDispatchAt?: Timestamp | null;
     supplies: { category: string; item: string; quantity: number }[];
     othersNote?: string;
     proofOfDelivery?: unknown;
     dispatchChat?: unknown[];
+    computedDelayMinutes?: number;
+    computedStopOverMinutes?: number;
+    computedIdleMinutes?: number;
+    computedDelayLabel?: string;
     createdAt: Timestamp | null;
 }
 
@@ -270,6 +277,11 @@ function isConfirmDeliveryReport(entry: any): boolean {
         || signal.includes("confirm_delivered");
 }
 
+function isDeliveredStatus(status: string | undefined | null): boolean {
+    const normalized = String(status || "").toLowerCase();
+    return normalized.includes("delivered") || normalized.includes("successful dispatch") || normalized.includes("completed");
+}
+
 function getReportKind(entry: any): string {
     if (isEmergencyReport(entry)) {
         return "Emergency";
@@ -295,7 +307,32 @@ function isTrackedReportKind(kind: string): boolean {
 }
 
 function toMillis(ts: Timestamp | { toMillis?: () => number } | null | undefined): number {
-    return ts?.toMillis?.() ?? 0;
+    if (ts == null) return 0;
+
+    // Numeric epoch milliseconds
+    if (typeof ts === "number" && Number.isFinite(ts)) return ts;
+
+    // Firestore Timestamp or similar with toMillis()
+    if (typeof (ts as any)?.toMillis === "function") return (ts as any).toMillis();
+
+    // Date object
+    if (ts instanceof Date) return ts.getTime();
+
+    // Firestore-like object with seconds/nanoseconds
+    const obj = ts as any;
+    if (obj && typeof obj === "object") {
+        if (typeof obj.seconds === "number") {
+            const nanos = typeof obj.nanoseconds === "number" ? Math.floor(obj.nanoseconds / 1e6) : 0;
+            return obj.seconds * 1000 + nanos;
+        }
+        if (typeof obj._seconds === "number") {
+            const nanos = typeof obj._nanoseconds === "number" ? Math.floor(obj._nanoseconds / 1e6) : 0;
+            return obj._seconds * 1000 + nanos;
+        }
+        if (typeof obj.timestamp === "number") return obj.timestamp;
+    }
+
+    return 0;
 }
 
 function extractStopOverReason(value: string | undefined | null): string | null {
@@ -353,6 +390,7 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const [delaySeenAtMs, setDelaySeenAtMs] = useState(0);
     const [tickNow, setTickNow] = useState(() => Date.now());
     const [isCurrentUserAdmin, setIsCurrentUserAdmin] = useState(false);
+    const [firestorePermissionError, setFirestorePermissionError] = useState<string | null>(null);
 
     const delaySeenStorageKey = useMemo(() => `dispatch_delay_seen_at_${dispatch.id}`, [dispatch.id]);
     const sourceDispatch = liveDispatch;
@@ -365,10 +403,20 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
         if (!dispatch.id) return;
 
         const dispatchRef = doc(db, "dispatches", dispatch.id);
-        const unsubscribe = onSnapshot(dispatchRef, (snapshot) => {
-            if (!snapshot.exists()) return;
-            setLiveDispatch({ id: snapshot.id, ...(snapshot.data() as Omit<Dispatch, "id">) });
-        });
+        const unsubscribe = onSnapshot(
+            dispatchRef,
+            (snapshot) => {
+                if (!snapshot.exists()) return;
+                setLiveDispatch({ id: snapshot.id, ...(snapshot.data() as Omit<Dispatch, "id">) });
+            },
+            (error) => {
+                console.error("Error listening to dispatch in detail:", error);
+                const msg = String((error as any)?.message || "");
+                if (/permission/i.test(msg) || (error as any)?.code === "permission-denied") {
+                    setFirestorePermissionError(msg || "Missing or insufficient permissions.");
+                }
+            }
+        );
 
         return () => unsubscribe();
     }, [dispatch.id]);
@@ -602,6 +650,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             setProofImages([]);
         } catch (error) {
             console.error("Error loading delivery proof images:", error);
+            const msg = String((error as any)?.message || "");
+            if (/permission/i.test(msg) || (error as any)?.code === "permission-denied") {
+                setFirestorePermissionError(msg || "Missing or insufficient permissions.");
+            }
             setProofImages([]);
         } finally {
             setLoadingProofImages(false);
@@ -669,6 +721,10 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             });
         } catch (error) {
             console.error("Error loading personnel report location:", error);
+            const msg = String((error as any)?.message || "");
+            if (/permission/i.test(msg) || (error as any)?.code === "permission-denied") {
+                setFirestorePermissionError(msg || "Missing or insufficient permissions.");
+            }
             setPersonnelReportLocation(null);
         } finally {
             setLoadingReportLocation(false);
@@ -885,8 +941,12 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             setTrackingEvents(dedupedTrackedReports);
         } catch (error) {
             console.error("Error loading tracking overview:", error);
-            setMovementPoints([]);
-            setTrackingEvents([]);
+                const msg = String((error as any)?.message || "");
+                if (/permission/i.test(msg) || (error as any)?.code === "permission-denied") {
+                    setFirestorePermissionError(msg || "Missing or insufficient permissions.");
+                }
+                setMovementPoints([]);
+                setTrackingEvents([]);
         } finally {
             setLoadingTrackingOverview(false);
         }
@@ -1259,7 +1319,14 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
     const stopOverEndedAtMs = isStopOverActive
         ? tickNow
         : Math.max(dispatchStatusUpdatedAtMs, latestMovementAfterStopMs);
-    const stopOverTrackedMinutes = stopOverStartedAtMs > 0
+    const storedDelayMinutes = Number((sourceDispatch as any)?.computedDelayMinutes);
+    const storedStopOverMinutes = Number((sourceDispatch as any)?.computedStopOverMinutes);
+    const storedIdleMinutes = Number((sourceDispatch as any)?.computedIdleMinutes);
+    const hasStoredDelayValues = Number.isFinite(storedDelayMinutes) || Number.isFinite(storedStopOverMinutes) || Number.isFinite(storedIdleMinutes);
+
+    const stopOverTrackedMinutes = hasStoredDelayValues && Number.isFinite(storedStopOverMinutes)
+        ? Math.max(0, storedStopOverMinutes)
+        : stopOverStartedAtMs > 0
         ? Math.max(0, (Math.max(stopOverEndedAtMs, stopOverStartedAtMs) - stopOverStartedAtMs) / 60000)
         : 0;
     const stopOverEndedAtLabel = !isStopOverActive && stopOverStartedAtMs > 0 && stopOverEndedAtMs > stopOverStartedAtMs
@@ -1272,6 +1339,28 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
             null
         )
         : null;
+
+    const dispatchDeliveredAtTimestamp =
+        sourceDispatch.deliveredAt ||
+        sourceDispatch.completedAt ||
+        sourceDispatch.successfulDispatchAt ||
+        sourceDispatch.updatedAt ||
+        sourceDispatch.UpdatedAt ||
+        null;
+    const dispatchDeliveredAtMs = toMillis(dispatchDeliveredAtTimestamp);
+
+    const latestIdleEvent = delayEvents[delayEvents.length - 1] || null;
+    const latestIdleAtMs = toMillis(latestIdleEvent?.timestamp || null);
+    const idleTrackedMinutes = hasStoredDelayValues && Number.isFinite(storedIdleMinutes)
+        ? Math.max(0, storedIdleMinutes)
+        : latestIdleAtMs > 0 && dispatchDeliveredAtMs > 0
+            ? Math.max(0, (dispatchDeliveredAtMs - latestIdleAtMs) / 60000)
+            : 0;
+
+    const totalDelayMinutes = hasStoredDelayValues && Number.isFinite(storedDelayMinutes)
+        ? Math.max(0, storedDelayMinutes)
+        : stopOverTrackedMinutes + idleTrackedMinutes;
+    const showTotalDelay = isDeliveredStatus(sourceDispatch.status);
 
     const stopOverReason = latestStopOverEvent
         ? extractStopOverReason(latestStopOverEvent.reportText)
@@ -1552,6 +1641,14 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
 
                 {/* Body */}
                 <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar">
+                    {firestorePermissionError ? (
+                        <div className="mx-auto w-full max-w-3xl">
+                            <div className="rounded-lg border border-rose-100 bg-rose-50 px-4 py-3 text-rose-700 text-sm">
+                                <strong className="font-bold">Permission error:</strong>&nbsp;Some data could not be loaded ({firestorePermissionError}).
+                                This may be due to Firestore rules. Contact an administrator if needed.
+                            </div>
+                        </div>
+                    ) : null}
                     {/* Top Row: Info & Status */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div className="p-5 rounded-3xl bg-slate-50 border border-slate-100 shadow-sm">
@@ -1568,6 +1665,21 @@ export default function DispatchDetailModal({ dispatch, onClose, onSuccess }: Pr
                             </div>
                             <span className="material-symbols-outlined text-white/5 text-7xl absolute right-[-10px] bottom-[-10px] group-hover:scale-110 transition-transform">schedule</span>
                         </div>
+
+                        {showTotalDelay ? (
+                            <div className="p-5 rounded-3xl bg-amber-50 border border-amber-100 shadow-sm">
+                                <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-2">Total Delay Time</p>
+                                <p className="text-2xl font-black text-amber-800">{formatDurationMinutes(totalDelayMinutes)}</p>
+                                <p className="mt-2 text-xs font-semibold text-amber-700">
+                                    Stop Over {formatDurationMinutes(stopOverTrackedMinutes)} + Idle {formatDurationMinutes(idleTrackedMinutes)}
+                                </p>
+                                {latestIdleEvent && (
+                                    <p className="mt-1 text-[11px] text-amber-700/80">
+                                        Last idle/break log at {formatTime(latestIdleEvent.timestamp)}
+                                    </p>
+                                )}
+                            </div>
+                        ) : null}
                     </div>
 
                     {/* Middle Row: Operational Location & Destination Info */}

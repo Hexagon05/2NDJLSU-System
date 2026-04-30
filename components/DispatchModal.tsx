@@ -981,7 +981,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
             <tr>
                 <td class="label-cell">Vehicle Assigned:</td>
                 <td>${truck || 'N/A'}</td>
-                <td class="label-cell">Officer-in-Charge:</td>
+                <td class="label-cell">Transportation Officer:</td>
                 <td>${personnels || 'N/A'}</td>
             </tr>
             <tr>
@@ -1078,13 +1078,13 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
                     <div class="signature-date">Date: __________</div>
                 </td>
                 <td>
-                    <div class="signature-label">Officer-in-Charge</div>
+                    <div class="signature-label">Transportation Officer</div>
                     <div class="signature-line"></div>
                     <div class="signature-date">Signature Over Printed Name</div>
                     <div class="signature-date">Date: __________</div>
                 </td>
                 <td>
-                    <div class="signature-label">Safety Officer / Approving Authority</div>
+                    <div class="signature-label">Operation NCO</div>
                     <div class="signature-line"></div>
                     <div class="signature-date">Signature Over Printed Name</div>
                     <div class="signature-date">Date: __________</div>
@@ -1098,7 +1098,7 @@ export default function DispatchModal({ onClose, onSuccess }: Props) {
         <div class="footer-text">
             ALL items in the BLOWBAGETS checklist MUST be verified and checked before vehicle dispatch. 
             This is a mandatory safety requirement to ensure the safety of personnel and successful mission completion. 
-            Any unchecked items must be addressed immediately before departure. The driver and officer-in-charge 
+            Any unchecked items must be addressed immediately before departure. The driver and transportation officer 
             are responsible for ensuring 100% compliance with this safety protocol.
         </div>
     </div>

@@ -119,13 +119,28 @@ export default function LeafletMap({ lat, lng, onChange }: LeafletMapProps) {
             markerRef.current = L.marker([lat, lng], { icon: buildPinIcon() }).addTo(mapRef.current);
         }
 
-        // Pan/fly map to new marker position so the selected point stays centered.
+        // Pan to new marker position so the selected point stays centered.
+        // Delay zooming to MIN_FOCUS_ZOOM until there's 30s of inactivity.
         if (mapRef.current) {
             clearRelockTimeout();
-            mapRef.current.flyTo([lat, lng], Math.max(mapRef.current.getZoom(), 13), {
-                animate: true,
-                duration: 0.6,
-            });
+            mapRef.current.panTo([lat, lng], { animate: true, duration: 0.6 });
+
+            // Schedule relock (zoom-in) after AUTO_RELOCK_MS of no further movement.
+            if (relockTimeoutRef.current === null) {
+                relockTimeoutRef.current = window.setTimeout(() => {
+                    relockTimeoutRef.current = null;
+
+                    const liveMap = mapRef.current;
+                    if (!liveMap) return;
+                    if (liveMap.getZoom() >= MIN_FOCUS_ZOOM) return;
+
+                    const point = latestPointRef.current;
+                    liveMap.flyTo([point.lat, point.lng], MIN_FOCUS_ZOOM, {
+                        animate: true,
+                        duration: 0.8,
+                    });
+                }, AUTO_RELOCK_MS);
+            }
         }
 
     }, [lat, lng, onChange]);

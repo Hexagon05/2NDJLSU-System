@@ -83,7 +83,7 @@ export default function VehiclePage() {
     bodyNumber: "",
     chassisNumber: "",
     engineNumber: "",
-    vehicleType: "",
+    vehicleType: "M923",
     vehicleCondition: "New",
     odometer: 0,
     imageUrl: "",
@@ -126,6 +126,13 @@ export default function VehiclePage() {
   const [enlargedImage, setEnlargedImage] = useState<{ url: string; label: string } | null>(null);
 
   const today = new Date().toISOString().split("T")[0];
+
+  const getPayloadCapacityByTruckType = (truckType: string) => {
+    if (truckType === "M923") return 5;
+    if (truckType === "KM450") return 1.25;
+    if (truckType === "KM250") return 2.5;
+    return 0;
+  };
 
   const fetchPersonnels = async () => {
     try {
@@ -313,6 +320,8 @@ export default function VehiclePage() {
     try {
       await addDoc(collection(db, "vehicles"), {
         ...form,
+        truckType: form.truckType,
+        vehicleType: form.vehicleType || form.truckType,
         personnelName,
         dateAdded: today,
         createdAt: Timestamp.now(),
@@ -347,7 +356,7 @@ export default function VehiclePage() {
         bodyNumber: "",
         chassisNumber: "",
         engineNumber: "",
-        vehicleType: "",
+        vehicleType: "M923",
         vehicleCondition: "New",
         odometer: 0,
         imageUrl: "",
@@ -379,8 +388,14 @@ export default function VehiclePage() {
   };
 
   const handleViewDetails = (vehicle: Vehicle) => {
-    setSelectedVehicle(vehicle);
-    setOriginalVehicle(vehicle);
+    const normalizedTruckType = vehicle.truckType || vehicle.vehicleType || "M923";
+    const normalizedVehicle = {
+      ...vehicle,
+      truckType: normalizedTruckType,
+      vehicleType: vehicle.vehicleType || normalizedTruckType,
+    };
+    setSelectedVehicle(normalizedVehicle);
+    setOriginalVehicle(normalizedVehicle);
     setDetailsModalOpen(true);
   };
 
@@ -429,7 +444,7 @@ export default function VehiclePage() {
         codename: selectedVehicle.codename,
         personnelId: selectedVehicle.personnelId,
         personnelName: selectedVehicle.personnelName,
-        truckType: selectedVehicle.truckType,
+        truckType: selectedVehicle.truckType || selectedVehicle.vehicleType || "M923",
         plate: selectedVehicle.plate,
         gasTankCapacity: selectedVehicle.gasTankCapacity,
         payloadCapacity: selectedVehicle.payloadCapacity,
@@ -438,7 +453,7 @@ export default function VehiclePage() {
         bodyNumber: selectedVehicle.bodyNumber,
         chassisNumber: selectedVehicle.chassisNumber,
         engineNumber: selectedVehicle.engineNumber,
-        vehicleType: selectedVehicle.vehicleType,
+        vehicleType: selectedVehicle.vehicleType || selectedVehicle.truckType || "M923",
         vehicleCondition: selectedVehicle.vehicleCondition,
         odometer: selectedVehicle.odometer,
         images: uploadedImages,
@@ -552,18 +567,24 @@ export default function VehiclePage() {
   };
 
   const handleEditChange = (field: keyof Vehicle, value: any) => {
-    if (selectedVehicle) {
+    setSelectedVehicle((prev) => {
+      if (!prev) return prev;
+
       // If changing personnelId, also update personnelName
       if (field === "personnelId") {
         const selectedPersonnel = personnels.find(p => p.id === value);
-        const personnelName = selectedPersonnel 
-          ? `${selectedPersonnel.rank} ${selectedPersonnel.lastName}, ${selectedPersonnel.firstName}` 
+        const personnelName = selectedPersonnel
+          ? `${selectedPersonnel.rank} ${selectedPersonnel.lastName}, ${selectedPersonnel.firstName}`
           : "Unassigned";
-        setSelectedVehicle({ ...selectedVehicle, personnelId: value, personnelName });
-      } else {
-        setSelectedVehicle({ ...selectedVehicle, [field]: value });
+        return { ...prev, personnelId: value, personnelName };
       }
-    }
+
+      if (field === "truckType") {
+        return { ...prev, truckType: value, vehicleType: value };
+      }
+
+      return { ...prev, [field]: value };
+    });
   };
 
   const navigationItems = [
@@ -1126,13 +1147,11 @@ export default function VehiclePage() {
                     value={form.truckType}
                     onChange={(e) => {
                       const val = e.target.value;
-                      let payloadCapacity = 5;
-                      if (val === "M923") payloadCapacity = 5;
-                      else if (val === "KM450") payloadCapacity = 1.25;
-                      else if (val === "KM250") payloadCapacity = 2.5;
+                      const payloadCapacity = getPayloadCapacityByTruckType(val);
                       setForm({
                         ...form,
                         truckType: val,
+                        vehicleType: val,
                         payloadCapacity
                       });
                     }}
@@ -1432,7 +1451,7 @@ export default function VehiclePage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Vehicle Type</label>
-                  <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedVehicle.vehicleType || "N/A"}</p>
+                  <p className="text-base text-slate-900 font-medium bg-slate-50 rounded-lg p-3">{selectedVehicle.truckType || selectedVehicle.vehicleType || "N/A"}</p>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Body Number</label>
@@ -1692,15 +1711,19 @@ export default function VehiclePage() {
                       <div>
                         <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Truck Type</label>
                         <select
-                          value={selectedVehicle.truckType || ""}
+                          value={selectedVehicle.truckType || selectedVehicle.vehicleType || "M923"}
                           onChange={(e) => {
                             const val = e.target.value;
-                            let payloadCapacity = 5;
-                            if (val === "M923") payloadCapacity = 5;
-                            else if (val === "KM450") payloadCapacity = 1.25;
-                            else if (val === "KM250") payloadCapacity = 2.5;
-                            handleEditChange("truckType", val);
-                            handleEditChange("payloadCapacity", payloadCapacity);
+                            const payloadCapacity = getPayloadCapacityByTruckType(val);
+                            setSelectedVehicle((prev) => {
+                              if (!prev) return prev;
+                              return {
+                                ...prev,
+                                truckType: val,
+                                vehicleType: val,
+                                payloadCapacity,
+                              };
+                            });
                           }}
                           className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-teal-700 focus:ring-2 focus:ring-teal-900/20 outline-none transition-all bg-white"
                         >

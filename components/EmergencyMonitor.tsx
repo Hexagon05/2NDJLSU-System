@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { collection, query, onSnapshot, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import TICEmergencyModal from "./TICEmergencyModal";
+import { dismissEmergencyId, getDismissedEmergencyIds } from "@/lib/emergency-dismissal";
 
 interface EmergencyReport {
   id: string;
@@ -20,6 +21,7 @@ interface EmergencyReport {
   imageUrl?: string;
   timestamp: any;
   status?: string;
+  isResolved?: boolean;
   type?: string;
   dispatchId?: string;
 }
@@ -28,9 +30,11 @@ export default function EmergencyMonitor() {
   const { user } = useAuth();
   const pathname = usePathname();
   const [emergencyReport, setEmergencyReport] = useState<EmergencyReport | null>(null);
-  const [dismissedEmergencies, setDismissedEmergencies] = useState<Set<string>>(new Set());
+  const [dismissedEmergencies, setDismissedEmergencies] = useState<Set<string>>(() => getDismissedEmergencyIds());
+  const emergencyReportRef = useRef<EmergencyReport | null>(null);
 
-  const isResolvedStatus = (status?: string) => (status || "").trim().toLowerCase() === "resolved";
+  const isEmergencyResolved = (report?: Pick<EmergencyReport, "isResolved" | "status"> | null) =>
+    report?.isResolved === true || (report?.status || "").trim().toLowerCase() === "resolved";
 
   const toNumber = (value: unknown): number | null => {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -82,6 +86,10 @@ export default function EmergencyMonitor() {
   };
 
   useEffect(() => {
+    emergencyReportRef.current = emergencyReport;
+  }, [emergencyReport]);
+
+  useEffect(() => {
     // Don't show emergency on login page or if user not authenticated
     if (!user || pathname === "/login") return;
 
@@ -99,9 +107,13 @@ export default function EmergencyMonitor() {
         location: extractEmergencyLocation(doc.data()) || (doc.data() as any).location,
       }));
 
-      // Filter to only active (non-resolved) emergencies
+      const currentReport = emergencyReport
+        ? allReports.find((report) => report.id === emergencyReportRef.current?.id) || emergencyReportRef.current
+        : null;
+
+      // Filter to only active (non-resolved) emergencies that have not already been dismissed.
       const activeReports = allReports.filter(
-        (report) => !isResolvedStatus(report.status)
+        (report) => !isEmergencyResolved(report) && !dismissedEmergencies.has(report.id)
       );
 
       // Find the first active emergency report that hasn't been dismissed
@@ -109,7 +121,9 @@ export default function EmergencyMonitor() {
         (report) => !dismissedEmergencies.has(report.id)
       );
 
-      if (activeEmergency) {
+      if (currentReport && !dismissedEmergencies.has(currentReport.id)) {
+        setEmergencyReport(currentReport);
+      } else if (activeEmergency) {
         setEmergencyReport(activeEmergency);
       } else {
         setEmergencyReport(null);
@@ -119,9 +133,17 @@ export default function EmergencyMonitor() {
     return () => unsubscribe();
   }, [user, pathname, dismissedEmergencies]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("dismissedEmergencyReportIds", JSON.stringify(Array.from(dismissedEmergencies)));
+  }, [dismissedEmergencies]);
+
   const handleClose = () => {
     if (emergencyReport) {
-      // Add to dismissed list so it doesn't pop up again until page refresh
+      dismissEmergencyId(emergencyReport.id);
       setDismissedEmergencies((prev) => new Set(prev).add(emergencyReport.id));
     }
     setEmergencyReport(null);
@@ -142,6 +164,7 @@ export default function EmergencyMonitor() {
       location={emergencyReport.location}
       description={emergencyReport.description}
       imageUrl={emergencyReport.imageUrl}
+      isResolved={isEmergencyResolved(emergencyReport)}
     />
   );
 }

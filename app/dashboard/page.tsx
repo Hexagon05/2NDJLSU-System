@@ -18,6 +18,7 @@ import {
   Timestamp,
   where,
   getDocs,
+  getDoc,
   doc,
   updateDoc,
   limit,
@@ -59,6 +60,13 @@ interface Dispatch {
   parked?: boolean | string | number | null;
   parkedAt?: Timestamp | null;
   dispatchChat?: unknown[];
+  deliveredAt?: Timestamp | null;
+  completedAt?: Timestamp | null;
+  successfulDispatchAt?: Timestamp | null;
+  computedDelayMinutes?: number;
+  computedStopOverMinutes?: number;
+  computedIdleMinutes?: number;
+  computedDelayLabel?: string;
   supplies: { category: string; item: string; quantity: number }[];
   createdAt: Timestamp | null;
 }
@@ -155,6 +163,7 @@ export default function Dashboard() {
   const [liveLocationsByDispatchId, setLiveLocationsByDispatchId] = useState<Record<string, RealtimeLocationPoint>>({});
   const [dispatchDelayIndicators, setDispatchDelayIndicators] = useState<Record<string, string>>({});
   const [idleVehicles, setIdleVehicles] = useState<Set<string>>(new Set());
+  const [isCurrentUserAdmin, setIsCurrentUserAdmin] = useState(false);
   const idleTrackingRef = useRef<Record<string, { anchorLat: number; anchorLng: number; lastLat: number; lastLng: number; stationarySince: number; lastSeen: number }>>({});
 
   // Base camp coordinate: 9°44'53.5"N 118°46'15.9"E
@@ -221,6 +230,148 @@ export default function Dashboard() {
       return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+  };
+
+  // Robust timestamp -> millis helper (handles Firestore Timestamps, numbers, Dates)
+  const toMillis = (ts: any): number => {
+    if (ts == null) return 0;
+    if (typeof ts === "number" && Number.isFinite(ts)) return ts;
+    if (ts instanceof Date) return ts.getTime();
+    if (ts?.toMillis && typeof ts.toMillis === "function") return ts.toMillis();
+    if (typeof ts === "object") {
+      if (typeof ts.seconds === "number") {
+        const nanos = typeof ts.nanoseconds === "number" ? Math.floor(ts.nanoseconds / 1e6) : 0;
+        return ts.seconds * 1000 + nanos;
+      }
+      if (typeof ts._seconds === "number") {
+        const nanos = typeof ts._nanoseconds === "number" ? Math.floor(ts._nanoseconds / 1e6) : 0;
+        return ts._seconds * 1000 + nanos;
+      }
+    }
+    return 0;
+  };
+
+  const formatDurationMinutes = (totalMinutes: number): string => {
+    if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "0m";
+    const safe = Math.max(0, Math.floor(totalMinutes));
+    const hours = Math.floor(safe / 60);
+    const minutes = safe % 60;
+    if (hours <= 0) return `${minutes}m`;
+    if (minutes <= 0) return `${hours}h`;
+    return `${hours}h ${minutes}m`;
+  };
+
+  const parseDurationMinutes = (value: unknown): number | null => {
+    if (value == null) return null;
+    const text = String(value).trim().toLowerCase();
+    if (!text) return null;
+
+    if (/^\d+(?:\.\d+)?$/.test(text)) return Number(text);
+
+    let total = 0;
+    let matched = false;
+    const hourRegex = /(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours)\b/g;
+    const minuteRegex = /(\d+(?:\.\d+)?)\s*(m|min|mins|minute|minutes)\b/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = hourRegex.exec(text)) !== null) {
+      total += Number(match[1]) * 60;
+      matched = true;
+    }
+
+    while ((match = minuteRegex.exec(text)) !== null) {
+      total += Number(match[1]);
+      matched = true;
+    }
+
+    if (!matched) {
+      const shorthand = text.match(/^(\d+(?:\.\d+)?)(h|m)$/i);
+      if (shorthand) {
+        const amount = Number(shorthand[1]);
+        return shorthand[2].toLowerCase() === "h" ? amount * 60 : amount;
+      }
+    }
+
+    return matched ? total : null;
+  };
+
+  const getExplicitDurationMinutes = (entry: any): number | null => {
+    if (!entry || typeof entry !== "object") return null;
+
+    const candidates = [
+      entry.estimatedDelay,
+      entry.duration,
+      entry.durationMinutes,
+      entry.delayMinutes,
+      entry.timeFrame,
+      entry.timeframe,
+      entry.reason,
+      entry.text,
+      entry.message,
+      entry.statusNote,
+      entry.description,
+    ];
+
+    for (const candidate of candidates) {
+      const parsed = parseDurationMinutes(candidate);
+      if (parsed !== null && Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+
+    return null;
+  };
+
+  const computeDelayStats = (dispatch: Dispatch, entries: any[]): { total: number; stopOver: number; idle: number; label: string } => {
+    const sortedEntries = [...entries].sort((left, right) => toMillis(left?.timestamp ?? left?.createdAt ?? left?.updatedAt ?? null) - toMillis(right?.timestamp ?? right?.createdAt ?? right?.updatedAt ?? null));
+    const delayEntries = sortedEntries.filter((entry) => isDelayReport(entry));
+    const stopOverEntries = sortedEntries.filter((entry) => {
+      const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
+      const kind = String(entry?.type || entry?.status || entry?.action || "").toLowerCase();
+      const signal = `${text} ${kind}`;
+      return signal.includes("stop over") || signal.includes("stopover") || signal.includes("stop-over");
+    });
+    const resumeEntries = sortedEntries.filter((entry) => {
+      const text = String(entry?.text || entry?.message || entry?.statusNote || "").toLowerCase();
+      const kind = String(entry?.type || entry?.status || entry?.action || "").toLowerCase();
+      const signal = `${text} ${kind}`;
+      return signal.includes("resume") || signal.includes("resumed") || signal.includes("back on route") || signal.includes("dispatch resumed");
+    });
+
+    const latestDelayAtMs = delayEntries.length === 0 ? 0 : Math.max(...delayEntries.map((entry) => toMillis(entry?.timestamp ?? entry?.createdAt ?? entry?.updatedAt ?? null)));
+    const latestStopOverAtMs = stopOverEntries.length === 0 ? 0 : Math.max(...stopOverEntries.map((entry) => toMillis(entry?.timestamp ?? entry?.createdAt ?? entry?.updatedAt ?? null)));
+    const latestResumeAtMs = resumeEntries.length === 0 ? 0 : Math.max(...resumeEntries.map((entry) => toMillis(entry?.timestamp ?? entry?.createdAt ?? entry?.updatedAt ?? null)));
+
+    const explicitIdle = delayEntries
+      .map(getExplicitDurationMinutes)
+      .find((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0) ?? null;
+    const explicitStopOver = stopOverEntries
+      .map(getExplicitDurationMinutes)
+      .find((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0) ?? null;
+
+    const normalizedStatus = String(dispatch.status || "").toLowerCase();
+    const dispatchStatusUpdatedAtMs = toMillis(dispatch.UpdatedAt || dispatch.updatedAt || dispatch.createdAt || null);
+    const isTerminal = ["completed", "successful dispatch", "cancelled", "delivered"].includes(normalizedStatus);
+    const statusIsStopOver = normalizedStatus.includes("stop over") || normalizedStatus.includes("stopover");
+    const isStopOverActive = statusIsStopOver && !isTerminal;
+
+    const stopOverStartedAtMs = latestStopOverAtMs > 0 ? latestStopOverAtMs : (isStopOverActive ? dispatchStatusUpdatedAtMs : 0);
+    const latestMovementAfterStopMs = latestStopOverAtMs === 0 ? 0 : Math.max(0, ...sortedEntries.map((entry) => toMillis(entry?.timestamp ?? entry?.createdAt ?? entry?.updatedAt ?? null)).filter((value) => value > latestStopOverAtMs));
+    const stopOverEndedAtMs = isStopOverActive ? Date.now() : Math.max(dispatchStatusUpdatedAtMs, latestResumeAtMs, latestMovementAfterStopMs || 0);
+    const timestampStopOver = stopOverStartedAtMs > 0 ? Math.max(0, (Math.max(stopOverEndedAtMs, stopOverStartedAtMs) - stopOverStartedAtMs) / 60000) : 0;
+    const stopOverMinutes = explicitStopOver ?? timestampStopOver;
+
+    const dispatchDeliveredAtMs = toMillis(dispatch.deliveredAt || dispatch.completedAt || dispatch.successfulDispatchAt || dispatch.updatedAt || dispatch.UpdatedAt || dispatch.createdAt || null);
+    const timestampIdle = latestDelayAtMs > 0 && dispatchDeliveredAtMs > 0 ? Math.max(0, (dispatchDeliveredAtMs - latestDelayAtMs) / 60000) : 0;
+    const idleMinutes = explicitIdle ?? timestampIdle;
+
+    const total = stopOverMinutes + idleMinutes;
+    const label = `${formatDurationMinutes(total)} (${formatDurationMinutes(stopOverMinutes)}+${formatDurationMinutes(idleMinutes)})`;
+
+    return {
+      total,
+      stopOver: stopOverMinutes,
+      idle: idleMinutes,
+      label,
+    };
   };
 
   const extractRoutePoint = (entry: any): RoutePoint | null => {
@@ -893,6 +1044,78 @@ export default function Dashboard() {
     return () => unsub();
   }, [dispatchRefresh, loading, user]);
 
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const loadAdminRole = async () => {
+      try {
+        const adminDoc = await getDoc(doc(db, "users", user.uid));
+        const role = String(adminDoc.data()?.role || "").trim().toLowerCase();
+        setIsCurrentUserAdmin(adminDoc.exists() && role === "admin");
+      } catch (error) {
+        console.error("Error checking dashboard admin role:", error);
+        setIsCurrentUserAdmin(false);
+      }
+    };
+
+    loadAdminRole();
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || !isCurrentUserAdmin || dispatches.length === 0 || typeof window === "undefined") return;
+
+    const storageKey = "dispatch_delay_backfill_v2_done";
+    if (window.localStorage.getItem(storageKey) === "1") return;
+
+    let cancelled = false;
+
+    const runBackfill = async () => {
+      try {
+        for (const dispatch of dispatches) {
+          if (cancelled) return;
+          if (!dispatch.id) continue;
+
+          const alreadyComputed = Number(dispatch.computedDelayMinutes);
+          if (Number.isFinite(alreadyComputed) && alreadyComputed > 0) continue;
+
+          const [messagesSnap, statusSnap] = await Promise.all([
+            getDocs(query(collection(db, "dispatches", dispatch.id, "messages"), orderBy("timestamp", "asc"), limit(250))),
+            getDocs(query(collection(db, "dispatches", dispatch.id, "status_reports"), orderBy("timestamp", "asc"), limit(250))),
+          ]);
+
+          const entries = [
+            ...messagesSnap.docs.map((item) => item.data() as any),
+            ...statusSnap.docs.map((item) => item.data() as any),
+            ...(Array.isArray(dispatch.dispatchChat) ? (dispatch.dispatchChat as any[]) : []),
+          ];
+
+          const delayStats = computeDelayStats(dispatch, entries);
+
+          if (delayStats.total <= 0) continue;
+
+          await updateDoc(doc(db, "dispatches", dispatch.id), {
+            computedDelayMinutes: delayStats.total,
+            computedStopOverMinutes: delayStats.stopOver,
+            computedIdleMinutes: delayStats.idle,
+            computedDelayLabel: delayStats.label,
+            computedDelayComputedAt: Timestamp.now(),
+          });
+        }
+
+        window.localStorage.setItem(storageKey, "1");
+        setDispatchRefresh((value) => value + 1);
+      } catch (error) {
+        console.error("Error backfilling dispatch delay minutes:", error);
+      }
+    };
+
+    runBackfill();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatches, isCurrentUserAdmin, user?.uid]);
+
   // Keep modal dispatch details synced with live Firestore updates (e.g., UpdatedAt).
   useEffect(() => {
     if (!selectedDispatch?.id) return;
@@ -968,33 +1191,70 @@ export default function Dashboard() {
 
     for (const dispatch of recentDispatches) {
       try {
+        if (!dispatch.id) continue;
+
+        const storedTotalDelay = Number(dispatch.computedDelayMinutes);
+        const storedStopOverDelay = Number(dispatch.computedStopOverMinutes);
+        const storedIdleDelay = Number(dispatch.computedIdleMinutes);
+        if (Number.isFinite(storedTotalDelay) && storedTotalDelay > 0) {
+          delayMap[dispatch.id] = dispatch.computedDelayLabel || `${formatDurationMinutes(storedTotalDelay)} (${formatDurationMinutes(Number.isFinite(storedStopOverDelay) ? storedStopOverDelay : 0)}+${formatDurationMinutes(Number.isFinite(storedIdleDelay) ? storedIdleDelay : 0)})`;
+          continue;
+        }
+
         const messagesRef = collection(db, "dispatches", dispatch.id, "messages");
-        const snap = await getDocs(query(messagesRef, orderBy("timestamp", "desc"), limit(100)));
+        const messagesSnap = await getDocs(query(messagesRef, orderBy("timestamp", "asc"), limit(250)));
 
-        // Find the first (most recent) delay report
-        const delayReport = snap.docs.find((doc) => isDelayReport(doc.data()));
+        const statusReportsRef = collection(db, "dispatches", dispatch.id, "status_reports");
+        const statusSnap = await getDocs(query(statusReportsRef, orderBy("timestamp", "asc"), limit(250)));
 
-        if (delayReport) {
-          const reportData = delayReport.data() as any;
-          const durationText = reportData?.duration || reportData?.text || reportData?.message || "";
+        const allEntries = [
+          ...messagesSnap.docs.map((d) => d.data() as any),
+          ...statusSnap.docs.map((d) => d.data() as any),
+          ...(Array.isArray(dispatch.dispatchChat) ? (dispatch.dispatchChat as any[]) : []),
+        ];
 
-          // Extract duration from text if available, otherwise use a generic label
-          let delayLabel = "Delay";
-          if (durationText) {
-            // Try to extract duration pattern like "20 mins", "1h 30m", etc.
-            const durationMatch = durationText.match(/(\d+)\s*(h|hour|min|minute|m)/i);
-            if (durationMatch) {
-              delayLabel = `Delay ${durationMatch[0]}`;
-            } else if (durationText.length < 30) {
-              delayLabel = `Delay ${durationText}`;
-            }
+        const delayEntries = allEntries.filter((e) => {
+          try { return isDelayReport(e); } catch { return false; }
+        });
+        const stopOverEntries = allEntries.filter((e) => {
+          try {
+            const text = String(e?.text || e?.message || e?.statusNote || "").toLowerCase();
+            const kind = String(e?.type || e?.status || e?.action || "").toLowerCase();
+            const signal = `${text} ${kind}`;
+            return signal.includes("stop over") || signal.includes("stopover") || signal.includes("stop-over");
+          } catch {
+            return false;
           }
+        });
 
-          delayMap[dispatch.id] = delayLabel;
+        const getTs = (entry: any) => toMillis(entry?.timestamp ?? entry?.createdAt ?? entry?.updatedAt ?? null);
+
+        const latestDelayAtMs = delayEntries.length === 0 ? 0 : Math.max(...delayEntries.map(getTs));
+        const latestStopOverAtMs = stopOverEntries.length === 0 ? 0 : Math.max(...stopOverEntries.map(getTs));
+
+        const normalizedStatus = String(dispatch.status || "").toLowerCase();
+        const dispatchStatusUpdatedAtMs = toMillis(dispatch.UpdatedAt || dispatch.updatedAt || dispatch.createdAt || null);
+        const isTerminal = ["completed", "successful dispatch", "cancelled", "delivered"].includes(normalizedStatus);
+        const statusIsStopOver = normalizedStatus.includes("stop over") || normalizedStatus.includes("stopover");
+        const isStopOverActive = statusIsStopOver && !isTerminal;
+
+        const stopOverStartedAtMs = latestStopOverAtMs > 0 ? latestStopOverAtMs : (isStopOverActive ? dispatchStatusUpdatedAtMs : 0);
+
+        // latest movement after stop: any message/status timestamp > latestStopOverAtMs
+        const latestMovementAfterStopMs = latestStopOverAtMs === 0 ? 0 : Math.max(0, ...allEntries.map((e) => getTs(e)).filter((t) => t > latestStopOverAtMs));
+
+        const stopOverEndedAtMs = isStopOverActive ? Date.now() : Math.max(dispatchStatusUpdatedAtMs, latestMovementAfterStopMs);
+        const stopOverTrackedMinutes = stopOverStartedAtMs > 0 ? Math.max(0, (Math.max(stopOverEndedAtMs, stopOverStartedAtMs) - stopOverStartedAtMs) / 60000) : 0;
+
+        const dispatchDeliveredAtMs = toMillis(dispatch.deliveredAt || dispatch.completedAt || dispatch.successfulDispatchAt || dispatch.updatedAt || dispatch.UpdatedAt || dispatch.createdAt || null);
+        const idleTrackedMinutes = latestDelayAtMs > 0 && dispatchDeliveredAtMs > 0 ? Math.max(0, (dispatchDeliveredAtMs - latestDelayAtMs) / 60000) : 0;
+
+        const total = stopOverTrackedMinutes + idleTrackedMinutes;
+        if (total > 0) {
+          delayMap[dispatch.id] = `${formatDurationMinutes(total)} (${formatDurationMinutes(stopOverTrackedMinutes)}+${formatDurationMinutes(idleTrackedMinutes)})`;
         }
       } catch (error) {
-        // Silently continue if error fetching delay info
-        console.error(`Error fetching delay for dispatch ${dispatch.id}:`, error);
+        console.error(`Error computing delay for dispatch ${dispatch.id}:`, error);
       }
     }
 

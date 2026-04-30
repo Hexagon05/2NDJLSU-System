@@ -13,9 +13,7 @@ import {
   Timestamp,
   doc,
   getDoc,
-  updateDoc,
 } from "firebase/firestore";
-import AppDialog from "@/components/AppDialog";
 import { acquireModalLock, releaseModalLock } from "@/lib/modal-lock";
 
 const EmergencyLocationMap = dynamic<{ lat: number; lng: number; onChange?: (lat: number, lng: number) => void }>(
@@ -49,7 +47,6 @@ interface TICEmergencyModalProps {
   location?: { lat: number; lng: number; label?: string };
   description?: string;
   imageUrl?: string;
-  onResolved?: () => void;
   isResolved?: boolean;
 }
 
@@ -71,20 +68,6 @@ export default function TICEmergencyModal({
   const [isAdmin, setIsAdmin] = useState(false);
   const [userDisplayName, setUserDisplayName] = useState("");
   const [roleChecked, setRoleChecked] = useState(false);
-  const [resolving, setResolving] = useState(false);
-  const [showResolveConfirm, setShowResolveConfirm] = useState(false);
-  const [resultDialog, setResultDialog] = useState<{
-    open: boolean;
-    title: string;
-    message: string;
-    tone: "default" | "success" | "danger";
-    closeParentOnConfirm?: boolean;
-  }>({
-    open: false,
-    title: "",
-    message: "",
-    tone: "default",
-  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -299,84 +282,6 @@ export default function TICEmergencyModal({
     }
   };
 
-  const handleResolveEmergency = async () => {
-    if (!emergencyReportId) {
-      console.error("âŒ No emergency report ID provided:", { emergencyReportId, dispatchId });
-      setResultDialog({
-        open: true,
-        title: "Unable to Resolve",
-        message: "Cannot resolve because the emergency report ID is missing. Please close and try again.",
-        tone: "danger",
-      });
-      return;
-    }
-
-    // Validate the ID is a string and not empty
-    if (typeof emergencyReportId !== 'string' || emergencyReportId.trim() === '') {
-      console.error("âŒ Invalid emergency report ID:", emergencyReportId);
-      setResultDialog({
-        open: true,
-        title: "Unable to Resolve",
-        message: "Cannot resolve because the emergency report ID is invalid.",
-        tone: "danger",
-      });
-      return;
-    }
-
-    setResolving(true);
-    try {
-      console.log("âœ… Resolving emergency report:", emergencyReportId);
-      console.log("ðŸ“ Document path:", `EmergencyReports/${emergencyReportId}`);
-      
-      const reportRef = doc(db, "EmergencyReports", emergencyReportId);
-      await updateDoc(reportRef, {
-        status: "resolved",
-        resolvedAt: Timestamp.now(),
-        resolvedBy: user?.uid,
-      });
-
-      console.log("âœ… Emergency resolved successfully");
-      setResultDialog({
-        open: true,
-        title: "Emergency Resolved",
-        message: "Emergency marked as RESOLVED successfully!",
-        tone: "success",
-        closeParentOnConfirm: true,
-      });
-    } catch (error: any) {
-      console.error("âŒ Error resolving emergency:", error);
-      console.error("âŒ Error code:", error?.code);
-      console.error("âŒ Report ID was:", emergencyReportId);
-      setResultDialog({
-        open: true,
-        title: "Resolve Failed",
-        message: `Failed to resolve emergency: ${error?.message || "Unknown error"}`,
-        tone: "danger",
-      });
-    } finally {
-      setResolving(false);
-    }
-  };
-
-  const handleResolveButtonClick = () => {
-    setShowResolveConfirm(true);
-  };
-
-  const handleCloseResultDialog = () => {
-    const shouldCloseParent = resultDialog.closeParentOnConfirm;
-    setResultDialog({
-      open: false,
-      title: "",
-      message: "",
-      tone: "default",
-      closeParentOnConfirm: false,
-    });
-
-    if (shouldCloseParent) {
-      onClose();
-    }
-  };
-
   const formatTime = (timestamp: Timestamp | null) => {
     if (!timestamp) return "";
     return timestamp.toDate().toLocaleTimeString("en-US", {
@@ -462,21 +367,7 @@ export default function TICEmergencyModal({
                   <span className="material-symbols-outlined text-lg">check_circle</span>
                   Resolved
                 </span>
-              ) : (
-                emergencyReportId && (
-                  <button
-                    onClick={() => {
-                      console.log("ðŸ”˜ Modal Resolve button clicked. Report ID:", emergencyReportId, "Type:", typeof emergencyReportId);
-                      handleResolveButtonClick();
-                    }}
-                    disabled={resolving}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <span className="material-symbols-outlined text-lg">check_circle</span>
-                    {resolving ? "Resolving..." : "Resolve"}
-                  </button>
-                )
-              )}
+              ) : null}
               <button
                 onClick={onClose}
                 className="text-white/80 hover:text-white hover:bg-white/20 rounded-xl p-2 transition-all duration-200 hover:rotate-90"
@@ -648,31 +539,6 @@ export default function TICEmergencyModal({
           </div>
         </form>
       </div>
-
-      <AppDialog
-        open={showResolveConfirm}
-        title="Confirm Resolution"
-        message="Are you sure you want to mark this emergency as RESOLVED? This will close the emergency report."
-        tone="danger"
-        confirmText={resolving ? "Resolving..." : "Yes, Resolve"}
-        cancelText="Cancel"
-        confirmDisabled={resolving}
-        onCancel={() => setShowResolveConfirm(false)}
-        onConfirm={async () => {
-          setShowResolveConfirm(false);
-          await handleResolveEmergency();
-        }}
-      />
-
-      <AppDialog
-        open={resultDialog.open}
-        title={resultDialog.title}
-        message={resultDialog.message}
-        tone={resultDialog.tone}
-        confirmText="OK"
-        hideCancel
-        onConfirm={handleCloseResultDialog}
-      />
 
       <style jsx>{`
         @keyframes scale-in {

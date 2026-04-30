@@ -18,6 +18,7 @@ import { db } from "@/lib/firebase";
 import NotificationsDropdown from "@/components/NotificationsDropdown";
 import DispatchChatHub from "@/components/DispatchChatHub";
 import AppDialog from "@/components/AppDialog";
+import { dismissEmergencyId, getDismissedEmergencyIds } from "@/lib/emergency-dismissal";
 
 interface EmergencyReport {
   id: string;
@@ -32,6 +33,7 @@ interface EmergencyReport {
   imageUrl?: string;
   timestamp: Timestamp | null;
   status?: string;
+  isResolved?: boolean;
   type?: string;
   dispatchId?: string;
 }
@@ -43,6 +45,7 @@ export default function EmergencyAlerts() {
   const [selectedReport, setSelectedReport] = useState<EmergencyReport | null>(null);
   const [emergencyReports, setEmergencyReports] = useState<EmergencyReport[]>([]);
   const [seenReportIds, setSeenReportIds] = useState<Set<string>>(new Set());
+  const [dismissedReportIds, setDismissedReportIds] = useState<Set<string>>(() => getDismissedEmergencyIds());
   const prevReportsCount = useRef(0);
   const [activePage, setActivePage] = useState(1);
   const [resolvedSearch, setResolvedSearch] = useState("");
@@ -65,12 +68,13 @@ export default function EmergencyAlerts() {
   });
   const ACTIVE_PER_PAGE = 5;
   const RESOLVED_PER_PAGE = 5;
+  const currentSelectedReport = selectedReport
+    ? emergencyReports.find((report) => report.id === selectedReport.id) || selectedReport
+    : null;
 
   const normalizeStatus = (status?: string) => (status || "").trim().toLowerCase();
-  const isResolvedStatus = (status?: string) => {
-    const normalized = normalizeStatus(status);
-    return normalized === "resolved";
-  };
+  const isEmergencyResolved = (report?: Pick<EmergencyReport, "isResolved" | "status"> | null) =>
+    report?.isResolved === true || normalizeStatus(report?.status) === "resolved";
 
   const toNumber = (value: unknown): number | null => {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -204,7 +208,7 @@ export default function EmergencyAlerts() {
     
     // Check if there's a new report (not in seen list and not resolved)
     const unseenReports = emergencyReports.filter(report => 
-      report.id && !seenReportIds.has(report.id) && !isResolvedStatus(report.status)
+      report.id && !seenReportIds.has(report.id) && !dismissedReportIds.has(report.id) && !isEmergencyResolved(report)
     );
     
     if (unseenReports.length > 0 && emergencyReports.length > prevReportsCount.current) {
@@ -237,7 +241,7 @@ export default function EmergencyAlerts() {
     }
     
     prevReportsCount.current = emergencyReports.length;
-  }, [emergencyReports, seenReportIds, selectedReport]);
+  }, [emergencyReports, seenReportIds, dismissedReportIds, selectedReport]);
 
   // Mark report as seen when manually opened
   const handleReportClick = (report: EmergencyReport) => {
@@ -262,6 +266,17 @@ export default function EmergencyAlerts() {
     
     setSelectedReport(report);
     setSeenReportIds(prev => new Set([...prev, report.id]));
+  };
+
+  const handleCloseSelectedReport = () => {
+    const currentReport = currentSelectedReport;
+
+    if (currentReport?.id) {
+      dismissEmergencyId(currentReport.id);
+      setDismissedReportIds((prev) => new Set(prev).add(currentReport.id));
+    }
+
+    setSelectedReport(null);
   };
 
   // Resolve an emergency report
@@ -292,6 +307,7 @@ export default function EmergencyAlerts() {
       
       const reportRef = doc(db, "EmergencyReports", reportId);
       await updateDoc(reportRef, {
+        isResolved: true,
         status: "resolved",
         resolvedAt: Timestamp.now(),
         resolvedBy: user?.uid,
@@ -337,7 +353,7 @@ export default function EmergencyAlerts() {
   ];
 
   const formatTimestamp = (ts: Timestamp | null): string => {
-    if (!ts) return "â€”";
+    if (!ts) return "-";
     return ts.toDate().toLocaleString("en-PH", {
       month: "short",
       day: "numeric",
@@ -348,7 +364,7 @@ export default function EmergencyAlerts() {
   };
 
   const getTimeElapsed = (timestamp: Timestamp | null): string => {
-    if (!timestamp) return "â€”";
+    if (!timestamp) return "-";
     const now = new Date();
     const date = timestamp.toDate();
     const diffMs = now.getTime() - date.getTime();
@@ -364,8 +380,8 @@ export default function EmergencyAlerts() {
 
   // Calculate stats
   const timeFilteredReports = emergencyReports.filter((report) => isReportWithinSelectedPeriod(report.timestamp));
-  const activeReports = timeFilteredReports.filter((r) => !isResolvedStatus(r.status));
-  const resolvedReports = timeFilteredReports.filter((r) => isResolvedStatus(r.status));
+  const activeReports = timeFilteredReports.filter((r) => !isEmergencyResolved(r));
+  const resolvedReports = timeFilteredReports.filter((r) => isEmergencyResolved(r));
   const activeTotalPages = Math.max(1, Math.ceil(activeReports.length / ACTIVE_PER_PAGE));
   const activeSafePage = Math.min(activePage, activeTotalPages);
   const paginatedActiveReports = activeReports.slice((activeSafePage - 1) * ACTIVE_PER_PAGE, activeSafePage * ACTIVE_PER_PAGE);
@@ -396,7 +412,21 @@ export default function EmergencyAlerts() {
   // Count unseen reports
   const unseenCount = activeReports.filter(report => report.id && !seenReportIds.has(report.id)).length;
 
-  const unseenCountAll = emergencyReports.filter(report => report.id && !seenReportIds.has(report.id) && !isResolvedStatus(report.status)).length;
+  const unseenCountAll = emergencyReports.filter(report => report.id && !seenReportIds.has(report.id) && !isEmergencyResolved(report)).length;
+
+  const openNewestUnseenEmergency = () => {
+    const nextUnseen = emergencyReports.find(
+      (report) =>
+        report.id &&
+        !seenReportIds.has(report.id) &&
+        !dismissedReportIds.has(report.id) &&
+        !isEmergencyResolved(report)
+    );
+
+    if (nextUnseen) {
+      handleReportClick(nextUnseen);
+    }
+  };
 
   useEffect(() => {
     if (activePage > activeTotalPages) {
@@ -461,15 +491,15 @@ export default function EmergencyAlerts() {
       {/* Emergency Detail Modal - Show when emergency report is clicked */}
       {selectedReport && (
         <TICEmergencyModal
-          onClose={() => setSelectedReport(null)}
-          truckCodename={selectedReport.type || "EMERGENCY"}
-          personnelName={selectedReport.senderName || selectedReport.reportedBy || "Field Personnel"}
-          emergencyReportId={selectedReport.id}
-          dispatchId={selectedReport.dispatchId}
-          location={selectedReport.location}
-          description={selectedReport.description}
-          imageUrl={selectedReport.imageUrl}
-          isResolved={isResolvedStatus(selectedReport.status)}
+          onClose={handleCloseSelectedReport}
+          truckCodename={currentSelectedReport?.type || "EMERGENCY"}
+          personnelName={currentSelectedReport?.senderName || currentSelectedReport?.reportedBy || "Field Personnel"}
+          emergencyReportId={currentSelectedReport?.id || selectedReport.id}
+          dispatchId={currentSelectedReport?.dispatchId}
+          location={currentSelectedReport?.location}
+          description={currentSelectedReport?.description || ""}
+          imageUrl={currentSelectedReport?.imageUrl}
+          isResolved={isEmergencyResolved(currentSelectedReport)}
         />
       )}
 
@@ -624,19 +654,14 @@ export default function EmergencyAlerts() {
                   <span className="material-symbols-outlined text-white text-5xl animate-bounce">priority_high</span>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-xl font-black uppercase tracking-wide">âš ï¸ New Emergency Alert!</h3>
+                  <h3 className="text-xl font-black uppercase tracking-wide">New Emergency Alert!</h3>
                   <p className="text-sm font-semibold text-white/90 mt-1">
                     {unseenCountAll} {unseenCountAll === 1 ? 'new emergency report' : 'new emergency reports'} requiring immediate attention
                   </p>
                 </div>
                 <div className="flex-shrink-0">
-                  <button 
-                    onClick={() => {
-                      const nextUnseen = emergencyReports.find((r) => r.id && !seenReportIds.has(r.id) && !isResolvedStatus(r.status));
-                      if (nextUnseen) {
-                        handleReportClick(nextUnseen);
-                      }
-                    }}
+                  <button
+                    onClick={openNewestUnseenEmergency}
                     className="px-6 py-3 bg-white text-orange-600 font-bold rounded-xl hover:bg-yellow-50 transition-all shadow-lg"
                   >
                     View Now
@@ -842,12 +867,12 @@ export default function EmergencyAlerts() {
                         </td>
                         <td className="px-6 py-3">
                           <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase ${
-                            isResolvedStatus(report.status)
+                            isEmergencyResolved(report)
                               ? 'bg-green-100 text-green-700 border-green-300'
                               : 'bg-red-100 text-red-700 border-red-300 animate-pulse'
                           }`}>
-                            {!isResolvedStatus(report.status) && <span className="mr-1.5 h-2 w-2 rounded-full bg-red-500"></span>}
-                            {isResolvedStatus(report.status) ? 'RESOLVED' : (report.status || "ACTIVE").toUpperCase()}
+                            {!isEmergencyResolved(report) && <span className="mr-1.5 h-2 w-2 rounded-full bg-red-500"></span>}
+                            {isEmergencyResolved(report) ? 'RESOLVED' : (report.status || "ACTIVE").toUpperCase()}
                           </span>
                         </td>
                         <td className="px-6 py-3">
@@ -864,7 +889,7 @@ export default function EmergencyAlerts() {
                               <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
                               <span className="text-xs text-slate-400 mt-0.5">
                                 {report.location?.lat != null && report.location?.lng != null
-                                  ? `${report.location.lat.toFixed(4)}Â°, ${report.location.lng.toFixed(4)}Â°`
+                                  ? `${report.location.lat.toFixed(4)}, ${report.location.lng.toFixed(4)}`
                                   : "Coordinates unavailable"}
                               </span>
                             </div>
@@ -884,27 +909,6 @@ export default function EmergencyAlerts() {
                               <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>chat</span>
                               Respond
                             </button>
-                            {!isResolvedStatus(report.status) && report.id && (
-                              <button
-                                onClick={(e) => {
-                                  console.log("ðŸ”˜ Resolve button clicked for report:", report.id, "Type:", typeof report.id);
-                                  if (!report.id) {
-                                    setDialogState({
-                                      open: true,
-                                      title: "Invalid Report",
-                                      message: "Report has no ID. Please refresh the page.",
-                                      tone: "danger",
-                                    });
-                                    return;
-                                  }
-                                  requestResolveReport(report.id, e);
-                                }}
-                                className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100 transition-colors border border-green-200 hover:border-green-300"
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: "1rem" }}>check_circle</span>
-                                Resolve
-                              </button>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -1050,7 +1054,7 @@ export default function EmergencyAlerts() {
                                   <span className="text-xs text-slate-600 line-clamp-2">{report.location?.label || "Unknown location"}</span>
                                   <span className="text-xs text-slate-400 mt-0.5">
                                     {report.location?.lat != null && report.location?.lng != null
-                                      ? `${report.location.lat.toFixed(4)}Â°, ${report.location.lng.toFixed(4)}Â°`
+                                      ? `${report.location.lat.toFixed(4)}, ${report.location.lng.toFixed(4)}`
                                       : "Coordinates unavailable"}
                                   </span>
                                 </div>
